@@ -44,5 +44,9 @@
     <ClInclude Include="libs\imgui\stb_rect_pack.h" />
     <ClInclude Include="libs\imgui\stb_textedit.h" />
     <ClInclude Include="libs\imgui\stb_truetype.h" />
+    <ClInclude Include="src\resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\resource.rc" />
   </ItemGroup>
 </Project>

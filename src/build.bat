@@ -31,9 +31,9 @@ REM Zi enables debug data, Z7 combines the debug files into one.
 
 REM W4 warning level 4
 REM WX treat warnings as errors
-REM wd4100 ignore unused parameters
+REM wd4100 ignore unused argument parameters
 
-set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100
+set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -wd4100
 
 REM Include directories
 set includeFlags=/I %GL3W% /I %GLFW%\include /I %IMGUI%

@@ -25,8 +25,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 #define GLFW_IMPLEMENTATION
 
+#include "GLFW/glfw3.h"
+
 #ifdef GLFW_IMPLEMENTATION
-  #include "GLFW/glfw3.h"
   #include "imgui_impl_glfw_gl3.h"
   #include "stdio.h"
 #endif
@@ -51,6 +52,18 @@ typedef struct WinjumpState
 	bool hotkeyPulledFocus;
 	ImVec2 frameBufferSize;
 } WinjumpState;
+
+INTERNAL void winjump_displayWindow(HWND windowHandle)
+{
+
+	// IsIconic == if window is minimised
+	if (IsIconic(windowHandle))
+	{
+		ShowWindow(windowHandle, SW_RESTORE);
+	}
+
+	SetForegroundWindow(windowHandle);
+}
 
 BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 {
@@ -111,8 +124,7 @@ INTERNAL LRESULT CALLBACK hotkeyWindowProcCallback(HWND window, UINT msg,
 			    (WinjumpState *)GetWindowLongPtr(window, GWLP_USERDATA);
 			state->hotkeyPulledFocus = true;
 
-			ShowWindow(window, SW_RESTORE);
-			SetForegroundWindow(window);
+			winjump_displayWindow(window);
 		}
 		break;
 
@@ -229,8 +241,7 @@ void winjump_update(GLFWwindow *window, WinjumpState *state)
 
 	if (windowToShow)
 	{
-		ShowWindow(windowToShow->handle, SW_RESTORE);
-		SetForegroundWindow(windowToShow->handle);
+		winjump_displayWindow(windowToShow->handle);
 	}
 
 	////////////////////////////////////////////////////////////////////////////
@@ -370,11 +381,11 @@ int main(int argc, char *argv[])
 // WINAPI Implementation
 // BROKEN - NOT YET COMPLETE!
 ////////////////////////////////////////////////////////////////////////////////
-
 // #define WINAPI_IMPLEMENTATION
 
 #ifdef WINAPI_IMPLEMENTATION
 #include <Windowsx.h>
+#include <commctrl.h>
 
 typedef struct ImGuiHelper
 {
@@ -404,81 +415,106 @@ GLOBAL_VAR Win32Input input        = {};
 GLOBAL_VAR bool globalRunning      = true;
 GLOBAL_VAR ImGuiHelper imGuiHelper = {};
 
-INTERNAL LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
-                                                 WPARAM wParam, LPARAM lParam)
+enum Win32Resources
+{
+	win32resource_list,
+	win32resource_static,
+};
+
+INTERNAL LRESULT CALLBACK
+mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	LRESULT result = 0;
 
 	switch (msg)
 	{
-	case WM_DESTROY:
-	case WM_CLOSE:
-	{
-		globalRunning = false;
-	}
-	break;
-
-	case WM_SYSKEYDOWN:
-	case WM_SYSKEYUP:
-	case WM_KEYDOWN:
-	case WM_KEYUP:
-	{
-		u32 vkCode = wParam;
-
-		bool keyWasDown = ((lParam & (1 << 30)) != 0);
-		bool keyIsDown  = ((lParam & (1 << 31)) == 0);
-
-		if (keyIsDown)
+		case WM_CREATE:
 		{
-			switch (vkCode)
-			{
+			HWND listBoxHandle = CreateWindow(
+			    WC_LISTVIEW, NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY, 10, 10, 150,
+			    120, window, (HMENU)win32resource_list, NULL, NULL);
 
-			case VK_LBUTTON:
-			case VK_RBUTTON:
-			case VK_MBUTTON:
+			EnumWindows(EnumWindowsProcCallback, NULL);
+			for (i32 i = 0; i < windowListIndex; i++)
 			{
-				i32 index = 0;
-				if (VK_RBUTTON)      index = 1;
-				else if (VK_MBUTTON) index = 2;
+				Win32Window win32Window = windowList[i];
+				SendMessage(listBoxHandle, LB_ADDSTRING, 0,
+				            (LPARAM)win32Window.title);
+			}
+			windowListIndex = 0;
 
-				imGuiHelper.mousePressed[index] = true;
+		}
+		break;
+
+		case WM_DESTROY:
+		case WM_CLOSE:
+		{
+			PostQuitMessage(0);
+		}
+		break;
+
+		case WM_SYSKEYDOWN:
+		case WM_SYSKEYUP:
+		case WM_KEYDOWN:
+		case WM_KEYUP:
+		{
+			u32 vkCode = wParam;
+
+			bool keyWasDown = ((lParam & (1 << 30)) != 0);
+			bool keyIsDown  = ((lParam & (1 << 31)) == 0);
+
+			if (keyIsDown)
+			{
+				switch (vkCode)
+				{
+
+					case VK_LBUTTON:
+					case VK_RBUTTON:
+					case VK_MBUTTON:
+					{
+						i32 index = 0;
+						if (vkCode == VK_RBUTTON)
+							index = 1;
+						else if (vkCode == VK_MBUTTON)
+							index = 2;
+
+						imGuiHelper.mousePressed[index] = true;
+					}
+
+					break;
+				}
+			}
+		}
+		break;
+
+		case WM_MOUSEWHEEL:
+		{
+			i32 keyModifiers = GET_KEYSTATE_WPARAM(wParam);
+			i16 wheelDelta   = GET_WHEEL_DELTA_WPARAM(wParam);
+
+			i32 xPos = GET_X_LPARAM(lParam);
+			i32 yPos = GET_Y_LPARAM(lParam);
+
+			i32 deltaX = xPos - input.prevScrollX;
+			i32 deltaY = yPos - input.prevScrollY;
+
+			if (deltaY > 0)
+			{
+				imGuiHelper.mouseWheel = 1;
+			}
+			else if (deltaY < 0)
+			{
+				imGuiHelper.mouseWheel = -1;
 			}
 
 			break;
-
-			}
 		}
-	}
-	break;
 
-	case WM_MOUSEWHEEL:
-	{
-		i32 keyModifiers = GET_KEYSTATE_WPARAM(wParam);
-		i16 wheelDelta   = GET_WHEEL_DELTA_WPARAM(wParam);
-
-		i32 xPos         = GET_X_LPARAM(lParam);
-		i32 yPos         = GET_Y_LPARAM(lParam);
-
-		i32 deltaX = xPos - input.prevScrollX;
-		i32 deltaY = yPos - input.prevScrollY;
-
-		if (deltaY > 0)
+		default:
 		{
-			imGuiHelper.mouseWheel = 1;
+			result = DefWindowProc(window, msg, wParam, lParam);
 		}
-		else if (deltaY < 0)
-		{
-			imGuiHelper.mouseWheel = -1;
-		}
-
 		break;
-	}
-
-	default:
-	{
-		result = DefWindowProc(window, msg, wParam, lParam);
-	}
-	break;
 	}
 
 	return result;
@@ -492,6 +528,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	wc.lpfnWndProc   = mainWindowProcCallback;
 	wc.hInstance     = hInstance;
 	wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+	wc.hbrBackground = GetSysColorBrush(COLOR_3DFACE);
 	wc.lpszClassName = "WinjumpWindowClass";
 
 	// Register class (i.e. Declare existence to Windows)
@@ -517,6 +554,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	                   r.bottom - r.top, NULL, NULL, hInstance, 0);
 	if (!mainWindowHandle) return -1;
 
+#if 0
 	// pixel format descriptor struct for the device context
 	PIXELFORMATDESCRIPTOR pfd =
 	{
@@ -583,15 +621,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 		io.ImeWindowHandle = mainWindowHandle;
 	}
+#endif
 
+	MSG msg;
+	while (GetMessage(&msg, NULL, 0, 0) > 0)
+	{
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+
+	}
+
+#if 0
 	while (globalRunning)
 	{
 		// Iterate through all OS messages given to the program
 		MSG msg;
 		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
 		}
 
 		GLfloat bg[] = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -599,6 +645,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 		SwapBuffers(handleDeviceContext);
 	}
+#endif
+
 	return 0;
 }
 #endif

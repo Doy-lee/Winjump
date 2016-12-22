@@ -151,6 +151,10 @@
     <ClInclude Include="libs\imgui\stb_textedit.h" />
     <ClInclude Include="libs\imgui\stb_truetype.h" />
     <ClInclude Include="src\imgui_impl_glfw_gl3.h" />
+    <ClInclude Include="src\resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\resource.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
