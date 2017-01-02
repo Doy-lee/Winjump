@@ -71,16 +71,11 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>.\bin\</OutDir>
     <IntDir>.\bin\</IntDir>
-    <IncludePath>C:\git\Winjump\libs\gl3w;C:\git\Winjump\libs\glfw\include;C:\git\Winjump\libs\imgui;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\git\Winjump\libs\glfw\vc2015-x86-static\lib;$(LibraryPath)</LibraryPath>
-    <SourcePath>$(SourcePath)</SourcePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>libs\glfw\include;libs\gl3w;libs\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -88,8 +83,7 @@
       <MinimalRebuild>false</MinimalRebuild>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>opengl32.lib;glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
       <IgnoreSpecificDefaultLibraries>
@@ -132,29 +126,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="libs\gl3w\GL\gl3w.c" />
-    <ClCompile Include="libs\imgui\imgui.cpp" />
-    <ClCompile Include="libs\imgui\imgui_demo.cpp" />
-    <ClCompile Include="libs\imgui\imgui_draw.cpp" />
-    <ClCompile Include="src\imgui_impl_glfw_gl3.cpp" />
     <ClCompile Include="src\winjump.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="libs\gl3w\GL\gl3w.h" />
-    <ClInclude Include="libs\gl3w\GL\glcorearb.h" />
-    <ClInclude Include="libs\glfw\include\GLFW\glfw3.h" />
-    <ClInclude Include="libs\glfw\include\GLFW\glfw3native.h" />
-    <ClInclude Include="libs\imgui\imconfig.h" />
-    <ClInclude Include="libs\imgui\imgui.h" />
-    <ClInclude Include="libs\imgui\imgui_internal.h" />
-    <ClInclude Include="libs\imgui\stb_rect_pack.h" />
-    <ClInclude Include="libs\imgui\stb_textedit.h" />
-    <ClInclude Include="libs\imgui\stb_truetype.h" />
-    <ClInclude Include="src\imgui_impl_glfw_gl3.h" />
-    <ClInclude Include="src\resource.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="src\resource.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

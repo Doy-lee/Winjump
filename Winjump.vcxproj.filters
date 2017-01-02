@@ -13,12 +13,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\imgui_impl_glfw_gl3.cpp">
-      <Filter>sources</Filter>
-    </ClCompile>
-    <ClCompile Include="libs\gl3w\GL\gl3w.c">
-      <Filter>sources</Filter>
-    </ClCompile>
     <ClCompile Include="libs\imgui\imgui.cpp">
       <Filter>sources</Filter>
     </ClCompile>
@@ -33,9 +27,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\imgui_impl_glfw_gl3.h" />
-    <ClInclude Include="libs\gl3w\GL\gl3w.h" />
-    <ClInclude Include="libs\gl3w\GL\glcorearb.h" />
     <ClInclude Include="libs\glfw\include\GLFW\glfw3.h" />
     <ClInclude Include="libs\glfw\include\GLFW\glfw3native.h" />
     <ClInclude Include="libs\imgui\imconfig.h" />
@@ -44,9 +35,5 @@
     <ClInclude Include="libs\imgui\stb_rect_pack.h" />
     <ClInclude Include="libs\imgui\stb_textedit.h" />
     <ClInclude Include="libs\imgui\stb_truetype.h" />
-    <ClInclude Include="src\resource.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="src\resource.rc" />
   </ItemGroup>
 </Project>

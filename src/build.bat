@@ -1,6 +1,6 @@
 @REM Build for Visual Studio compiler. Run your copy of vcvars32.bat or vcvarsall.bat to setup command-line compiler.
-
 @echo OFF
+ctime -begin winjump.ctm
 
 REM Build tags file
 ctags -R
@@ -13,10 +13,6 @@ if %errorlevel%==1 call msvc86.bat
 REM Drop compilation files into build folder
 IF NOT EXIST ..\bin mkdir ..\bin
 pushd ..\bin
-
-set GL3W=..\libs\gl3w
-set GLFW=..\libs\glfw
-set IMGUI=..\libs\imgui
 
 REM EHa- disable exception handling (we don't use)
 REM GR- disable c runtime type information (we don't use)
@@ -36,12 +32,14 @@ REM wd4100 ignore unused argument parameters
 set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -wd4100
 
 REM Include directories
-set includeFlags=/I %GL3W% /I %GLFW%\include /I %IMGUI%
+set includeFlags=
 
 REM Link libraries
-set linkLibraries=%GLFW%\vc2015-x86-static\lib\glfw3.lib opengl32.lib gdi32.lib shell32.lib
-set compileFiles= ..\src\*.cpp %IMGUI%\imgui*.cpp %GL3W%\GL\gl3w.c
+set linkLibraries=user32.lib gdi32.lib
+set linkFlags=-incremental:no -opt:ref
+set compileFiles= ..\src\*.cpp
 
-cl %compileFlags% %compileFiles% %includeFlags% /link -subsystem:console %linkLibraries% /OUT:"winjump.exe"
+cl %compileFlags% %compileFiles% %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /OUT:"winjump.exe"
 
 popd
+ctime -end winjump.ctm

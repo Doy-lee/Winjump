@@ -21,4 +21,26 @@ typedef unsigned char u8;
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof(array[0]))
 #define ASSERT(expr) if (!(expr)) { (*((int *)0)) = 0; }
 
+#define MATH_ABS(x) (((x) < 0) ? (-(x)) : (x))
+
+typedef union v2 {
+	struct { f32 x, y; };
+	struct { f32 w, h; };
+} v2;
+
+v2 V2(f32 x, f32 y)
+{
+	v2 result = {};
+	result.x  = x;
+	result.y  = y;
+
+	return result;
+}
+
+v2 V2i(i32 x, i32 y)
+{
+	v2 result = V2((f32)x, (f32)y);
+	return result;
+}
+
 #endif
