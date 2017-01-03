@@ -10,6 +10,7 @@
 typedef uint32_t u32;
 typedef uint16_t u16;
 
+typedef int64_t i64;
 typedef int32_t i32;
 typedef int16_t i16;
 
@@ -42,5 +43,30 @@ v2 V2i(i32 x, i32 y)
 	v2 result = V2((f32)x, (f32)y);
 	return result;
 }
+
+i32 common_strcmp(const char *a, const char *b)
+{
+	while ((*a) == (*b))
+	{
+		if (!(*a)) return 0;
+		a++;
+		b++;
+	}
+
+	return (((*a) < (*b)) ? -1 : 1);
+}
+
+i32 common_strlen(const char *a)
+{
+	i32 result = 0;
+	while ((*a))
+	{
+		result++;
+		a++;
+	}
+
+	return result;
+}
+
 
 #endif

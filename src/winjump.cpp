@@ -14,11 +14,13 @@
 
 // TODO(doyle): Organise all our globals siting around.
 // TODO(doyle): Platform layer separation
+GLOBAL_VAR bool globalRunning;
 
 typedef struct Win32Window
 {
-	char title[256];
-	HWND handle;
+	char  title[256];
+	HWND  handle;
+	DWORD pid;
 } Win32Window;
 
 enum WindowTypeIndex
@@ -29,15 +31,24 @@ enum WindowTypeIndex
 	windowtype_count,
 };
 
+typedef struct Win32WindowArray
+{
+	Win32Window window[128];
+	i32         index;
+} Win32WindowArray;
+
 typedef struct WinjumpState
 {
-	bool init;
-	bool keyboardActivityThisFrame;
-	bool hotkeyPulledFocus;
-	v2 frameBufferSize;
+	bool  init;
+	bool  keyboardActivityThisFrame;
+	bool  hotkeyPulledFocus;
+	v2    frameBufferSize;
 	HFONT defaultFont;
+	HWND  window[windowtype_count];
 
-	HWND window[3];
+	f32   listUpdateTimer;
+	f32   listUpdateRateInS;
+	Win32WindowArray windowList;
 } WinjumpState;
 
 typedef struct Win32Input
@@ -45,6 +56,7 @@ typedef struct Win32Input
 	i32 prevScrollX;
 	i32 prevScrollY;
 } Win32Input;
+GLOBAL_VAR Win32Input input = {};
 
 enum Win32Resources
 {
@@ -54,11 +66,6 @@ enum Win32Resources
 
 #define OFFSET_TO_STATE_PTR 0
 #define MAX_WINDOW_TITLE_LEN ARRAY_COUNT(((Win32Window *)0)->title)
-
-GLOBAL_VAR Win32Input input        = {};
-GLOBAL_VAR bool globalRunning      = true;
-GLOBAL_VAR i32 windowListIndex     = 0;
-GLOBAL_VAR Win32Window windowList[128];
 
 INTERNAL void winjump_displayWindow(HWND windowHandle)
 {
@@ -74,7 +81,8 @@ INTERNAL void winjump_displayWindow(HWND windowHandle)
 
 BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 {
-	if ((windowListIndex + 1) < ARRAY_COUNT(windowList))
+	Win32WindowArray *windowArr = (Win32WindowArray *)lParam;
+	if ((windowArr->index + 1) < ARRAY_COUNT(windowArr->window))
 	{
 		Win32Window window = {};
 		GetWindowText(windowHandle, window.title, MAX_WINDOW_TITLE_LEN);
@@ -99,10 +107,12 @@ BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 				lastPopup = GetLastActivePopup(rootWindow);
 				if (IsWindowVisible(lastPopup) && lastPopup == windowHandle)
 				{
-					window.handle                 = windowHandle;
-					windowList[windowListIndex++] = window;
+					GetWindowThreadProcessId(windowHandle, &window.pid);
+					window.handle                         = windowHandle;
+					windowArr->window[windowArr->index++] = window;
 					break;
 				}
+
 				rootWindow = lastPopup;
 				lastPopup  = GetLastActivePopup(rootWindow);
 			} while (lastPopup != rootWindow);
@@ -144,23 +154,6 @@ INTERNAL LRESULT CALLBACK hotkeyWindowProcCallback(HWND window, UINT msg,
 	}
 
 	return result;
-}
-
-INTERNAL BOOL CALLBACK enumChildProcCallback(HWND window, LPARAM lParam)
-{
-	if (lParam == WM_SETFONT)
-	{
-		WinjumpState *state    = (WinjumpState *)GetWindowLongPtr(window, 0);
-		bool redrawImmediately = true;
-		SendMessage(window, WM_SETFONT, (WPARAM)state->defaultFont,
-		            redrawImmediately);
-	}
-	else
-	{
-		ASSERT(INVALID_CODE_PATH);
-	}
-
-	return true;
 }
 
 INTERNAL LRESULT CALLBACK
@@ -258,7 +251,7 @@ mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 		case WM_DESTROY:
 		case WM_CLOSE:
 		{
-			PostQuitMessage(0);
+			globalRunning = false;
 		}
 		break;
 
@@ -330,6 +323,23 @@ mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 	return result;
 }
 
+GLOBAL_VAR LARGE_INTEGER globalQueryPerformanceFrequency;
+inline INTERNAL f32 getTimeFromQueryPerfCounter(LARGE_INTEGER start,
+                                                LARGE_INTEGER end)
+{
+	f32 result = (f32)(end.QuadPart - start.QuadPart) /
+	             globalQueryPerformanceFrequency.QuadPart;
+	return result;
+}
+
+inline LARGE_INTEGER getWallClock()
+{
+	LARGE_INTEGER result;
+	QueryPerformanceCounter(&result);
+
+	return result;
+}
+
 #include <stdio.h>
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd)
@@ -371,8 +381,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect(&r, windowStyle, FALSE);
 
-	WinjumpState state = {};
-	state.init         = true;
+	WinjumpState state      = {};
+	state.init              = true;
+	state.listUpdateRateInS = 1.0f;
+	state.listUpdateTimer   = state.listUpdateRateInS;
+	globalRunning           = true;
 
 	HWND mainWindowHandle =
 	    CreateWindowEx(0, wc.lpszClassName, "Winjump", windowStyle,
@@ -386,32 +399,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	}
 	state.window[windowtype_main_client] = mainWindowHandle;
 
-    LARGE_INTEGER queryPerformanceFrequency;
-    LARGE_INTEGER startFrameTime, endWorkTime, endFrameTime;
-    QueryPerformanceFrequency(&queryPerformanceFrequency);
-	f32 targetSecondsPerFrame = 1 / 15.0f;
+    QueryPerformanceFrequency(&globalQueryPerformanceFrequency);
+
+	LARGE_INTEGER startFrameTime;
+	f32 targetSecondsPerFrame = 1 / 16.0f;
+	f32 frameTimeInS = 0.0f;
 
 	MSG msg;
-	bool running = true;
-	while (running)
+	while (globalRunning)
 	{
-		QueryPerformanceCounter(&startFrameTime);
-		SendMessage(state.window[windowtype_list_window_entries],
-		            LB_RESETCONTENT, 0, 0);
-
-		EnumWindows(EnumWindowsProcCallback, NULL);
-		for (i32 i = 0; i < ARRAY_COUNT(windowList); i++)
-		{
-			if (windowList[i].title[0])
-			{
-				SendMessage(state.window[windowtype_list_window_entries],
-				            LB_ADDSTRING, 0, (LPARAM)windowList[i].title);
-			}
-			else
-			{
-				break;
-			}
-		}
+		startFrameTime = getWallClock();
 
 		while (PeekMessage(&msg, mainWindowHandle, 0, 0, PM_REMOVE))
 		{
@@ -419,17 +416,97 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			DispatchMessage(&msg);
 		}
 
-		for (i32 i = 0; i < windowListIndex; i++)
+		state.listUpdateTimer += frameTimeInS;
+		if (state.listUpdateTimer >= state.listUpdateRateInS)
 		{
-			windowList[i] = {};
+			Win32WindowArray *windowArray = &state.windowList;
+			ASSERT(windowArray->index == 0);
+
+			state.listUpdateTimer = 0.0f;
+			EnumWindows(EnumWindowsProcCallback, (LPARAM)windowArray);
+
+			bool arrayEntryValidated[ARRAY_COUNT(windowArray->window)] = {};
+
+			HWND listBox     = state.window[windowtype_list_window_entries];
+			LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
+
+			for (LRESULT itemIndex = 0; itemIndex < listSize; itemIndex++)
+			{
+				bool programInListStillRunning = false;
+				LRESULT listEntryPid =
+				    SendMessage(listBox, LB_GETITEMDATA, itemIndex, 0);
+				ASSERT(listEntryPid != LB_ERR);
+				for (i32 windowIndex = 0; windowIndex < windowArray->index;
+				     windowIndex++)
+				{
+					Win32Window *currProgram =
+					    &windowArray->window[windowIndex];
+					// TODO(doyle): Since our window enumeration method is not
+					// reliable, sometimes we pick up two windows from the same
+					// PID, so we also check to see if we've validated the entry
+					// before yet.
+					if (currProgram->pid == (DWORD)listEntryPid &&
+					    !arrayEntryValidated[windowIndex])
+					{
+						char entryString[ARRAY_COUNT(currProgram->title)] = {};
+						LRESULT entryStringLen =
+						    SendMessage(listBox, LB_GETTEXT, itemIndex,
+						                (LPARAM)entryString);
+						ASSERT(entryStringLen != LB_ERR);
+
+						if (common_strcmp(currProgram->title, entryString) != 0)
+						{
+							LRESULT insertIndex =
+							    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
+							                (LPARAM)currProgram->title);
+							ASSERT(insertIndex == itemIndex);
+
+							LRESULT result =
+							    SendMessage(listBox, LB_SETITEMDATA, itemIndex,
+							                currProgram->pid);
+							ASSERT(result != LB_ERR);
+
+							LRESULT itemCount = SendMessage(
+							    listBox, LB_DELETESTRING, itemIndex + 1, 0);
+							ASSERT(itemCount == listSize);
+						}
+
+						arrayEntryValidated[windowIndex] = true;
+						programInListStillRunning        = true;
+						break;
+					}
+				}
+
+				if (!programInListStillRunning)
+				{
+					LRESULT result =
+					    SendMessage(listBox, LB_DELETESTRING, itemIndex, 0);
+					ASSERT(result != LB_ERR);
+				}
+			}
+
+			for (i32 i = 0; i < windowArray->index; i++)
+			{
+				if (!arrayEntryValidated[i])
+				{
+					Win32Window *window = &windowArray->window[i];
+					LRESULT insertIndex = SendMessage(listBox, LB_ADDSTRING, 0,
+					                                  (LPARAM)window->title);
+					ASSERT(insertIndex != LB_ERR);
+
+					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
+					                             insertIndex, window->pid);
+					ASSERT(result != LB_ERR);
+				}
+			}
+
+			Win32WindowArray emptyArray = {};
+			state.windowList            = emptyArray;
 		}
-		windowListIndex = 0;
 
-
-		QueryPerformanceCounter(&endWorkTime);
-
-		f32 workTimeInS = (f32)(startFrameTime.QuadPart - endWorkTime.QuadPart) /
-		                  queryPerformanceFrequency.QuadPart;
+		LARGE_INTEGER endWorkTime = getWallClock();
+		f32 workTimeInS =
+		    getTimeFromQueryPerfCounter(startFrameTime, endWorkTime);
 
 		if (workTimeInS < targetSecondsPerFrame)
 		{
@@ -438,10 +515,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			Sleep(remainingTimeInMs);
 		}
 
-		QueryPerformanceCounter(&endFrameTime);
-		f32 frameTimeInS =
-		    (f32)(startFrameTime.QuadPart - endFrameTime.QuadPart) /
-		    queryPerformanceFrequency.QuadPart;
+		LARGE_INTEGER endFrameTime = getWallClock();
+		frameTimeInS =
+		    getTimeFromQueryPerfCounter(startFrameTime, endFrameTime);
 		f32 msPerFrame = 1000.0f * frameTimeInS;
 
 		char windowTitleBuffer[128] = {};
