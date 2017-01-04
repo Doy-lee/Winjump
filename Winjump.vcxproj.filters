@@ -13,27 +13,8 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="libs\imgui\imgui.cpp">
-      <Filter>sources</Filter>
-    </ClCompile>
-    <ClCompile Include="libs\imgui\imgui_demo.cpp">
-      <Filter>sources</Filter>
-    </ClCompile>
-    <ClCompile Include="libs\imgui\imgui_draw.cpp">
-      <Filter>sources</Filter>
-    </ClCompile>
     <ClCompile Include="src\winjump.cpp">
       <Filter>sources</Filter>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="libs\glfw\include\GLFW\glfw3.h" />
-    <ClInclude Include="libs\glfw\include\GLFW\glfw3native.h" />
-    <ClInclude Include="libs\imgui\imconfig.h" />
-    <ClInclude Include="libs\imgui\imgui.h" />
-    <ClInclude Include="libs\imgui\imgui_internal.h" />
-    <ClInclude Include="libs\imgui\stb_rect_pack.h" />
-    <ClInclude Include="libs\imgui\stb_textedit.h" />
-    <ClInclude Include="libs\imgui\stb_truetype.h" />
   </ItemGroup>
 </Project>

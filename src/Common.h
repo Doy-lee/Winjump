@@ -56,6 +56,19 @@ i32 common_strcmp(const char *a, const char *b)
 	return (((*a) < (*b)) ? -1 : 1);
 }
 
+i32 common_wstrcmp(const wchar_t *a, const wchar_t *b)
+{
+	while ((*a) == (*b))
+	{
+		if (!(*a)) return 0;
+		a++;
+		b++;
+	}
+
+	return (((*a) < (*b)) ? -1 : 1);
+}
+
+
 i32 common_strlen(const char *a)
 {
 	i32 result = 0;

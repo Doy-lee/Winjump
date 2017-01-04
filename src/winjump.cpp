@@ -1,3 +1,6 @@
+#define UNICODE
+#define _UNICODE
+
 #ifndef VC_EXTRALEAN
   #define VC_EXTRALEAN
 #endif
@@ -18,9 +21,9 @@ GLOBAL_VAR bool globalRunning;
 
 typedef struct Win32Window
 {
-	char  title[256];
-	HWND  handle;
-	DWORD pid;
+	wchar_t title[256];
+	HWND    handle;
+	DWORD   pid;
 } Win32Window;
 
 enum WindowTypeIndex
@@ -183,7 +186,7 @@ mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 
 			HWND editHandle = CreateWindowEx(
 			  WS_EX_CLIENTEDGE,
-			  "EDIT",
+			  L"EDIT",
 			  NULL,
 			  WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP,
 			  (i32)editP.x,
@@ -203,9 +206,9 @@ mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 
 			HWND listHandle = CreateWindowEx(
 			  WS_EX_CLIENTEDGE,
-			  "LISTBOX",
+			  L"LISTBOX",
 			  NULL,
-			  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL,
+			  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY,
 			  (i32)listP.x,
 			  (i32)listP.y,
 			  listWidth,
@@ -243,6 +246,41 @@ mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 				{
 					// TODO(doyle): Logging, default font query failed
 					ASSERT(INVALID_CODE_PATH);
+				}
+			}
+		}
+		break;
+
+		case WM_COMMAND:
+		{
+			WORD notificationCode = HIWORD((DWORD)wParam);
+			WORD listBoxId        = LOWORD((DWORD)wParam);
+			HWND handle           = (HWND)lParam;
+
+			WinjumpState *state =
+			    (WinjumpState *)GetWindowLongPtr(window, OFFSET_TO_STATE_PTR);
+			if (handle == state->window[win32resource_list])
+			{
+				if (notificationCode == LBN_SELCHANGE)
+				{
+					Win32WindowArray array = state->windowList;
+					LRESULT selectedIndex =
+					    SendMessage(handle, LB_GETCURSEL, 0, 0);
+
+					// NOTE: LB_ERR if list unselected
+					if (selectedIndex != LB_ERR)
+					{
+						ASSERT(selectedIndex < ARRAY_COUNT(array.window));
+
+						Win32Window windowToShow = array.window[selectedIndex];
+						LRESULT itemPid = SendMessage(handle, LB_GETITEMDATA,
+						                              selectedIndex, 0);
+						ASSERT((u32)itemPid == windowToShow.pid);
+
+						SendMessage(handle, LB_SETCURSEL, -1, 0);
+
+						winjump_displayWindow(windowToShow.handle);
+					}
 				}
 			}
 		}
@@ -340,6 +378,33 @@ inline LARGE_INTEGER getWallClock()
 	return result;
 }
 
+void debug_checkWin32ListContents(HWND listBox, wchar_t listEntries[128][256])
+{
+	LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
+	for (i32 i = 0; i < listSize; i++)
+	{
+		SendMessage(listBox, LB_GETTEXT, i, (LPARAM)listEntries[i]);
+	}
+}
+
+i32 debug_getListEntrySize(wchar_t listEntries[128][256])
+{
+	i32 result = 0;
+	for (i32 i = 0; i < 128; i++)
+	{
+		if (listEntries[i][0])
+		{
+			result++;
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	return result;
+}
+
 #include <stdio.h>
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd)
@@ -357,8 +422,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		LoadIcon(NULL, IDI_APPLICATION),
 		LoadCursor(NULL, IDC_ARROW),
 		GetSysColorBrush(COLOR_3DFACE),
-		"", // LPCTSTR lpszMenuName
-		"WinjumpWindowClass",
+		L"", // LPCTSTR lpszMenuName
+		L"WinjumpWindowClass",
 		NULL, // HICON hIconSm
 	};
 
@@ -383,12 +448,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	WinjumpState state      = {};
 	state.init              = true;
-	state.listUpdateRateInS = 1.0f;
+	state.listUpdateRateInS = 0.5f;
 	state.listUpdateTimer   = state.listUpdateRateInS;
 	globalRunning           = true;
 
 	HWND mainWindowHandle =
-	    CreateWindowEx(0, wc.lpszClassName, "Winjump", windowStyle,
+	    CreateWindowEx(0, wc.lpszClassName, L"Winjump", windowStyle,
 	                   CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
 	                   r.bottom - r.top, NULL, NULL, hInstance, &state);
 	if (!mainWindowHandle)
@@ -410,19 +475,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	{
 		startFrameTime = getWallClock();
 
-		while (PeekMessage(&msg, mainWindowHandle, 0, 0, PM_REMOVE))
-		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
-
 		state.listUpdateTimer += frameTimeInS;
 		if (state.listUpdateTimer >= state.listUpdateRateInS)
 		{
+			state.listUpdateTimer = 0.0f;
+
 			Win32WindowArray *windowArray = &state.windowList;
+			Win32WindowArray emptyArray = {};
+			state.windowList            = emptyArray;
 			ASSERT(windowArray->index == 0);
 
-			state.listUpdateTimer = 0.0f;
 			EnumWindows(EnumWindowsProcCallback, (LPARAM)windowArray);
 
 			bool arrayEntryValidated[ARRAY_COUNT(windowArray->window)] = {};
@@ -430,64 +492,67 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			HWND listBox     = state.window[windowtype_list_window_entries];
 			LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
 
-			for (LRESULT itemIndex = 0; itemIndex < listSize; itemIndex++)
+			for (LRESULT itemIndex = 0;
+			     (itemIndex < listSize) && (itemIndex < windowArray->index);
+			     itemIndex++)
 			{
 				bool programInListStillRunning = false;
 				LRESULT listEntryPid =
 				    SendMessage(listBox, LB_GETITEMDATA, itemIndex, 0);
 				ASSERT(listEntryPid != LB_ERR);
-				for (i32 windowIndex = 0; windowIndex < windowArray->index;
-				     windowIndex++)
+
+				Win32Window *currProgram = &windowArray->window[itemIndex];
+				if (currProgram->pid == (DWORD)listEntryPid &&
+				    !arrayEntryValidated[itemIndex])
 				{
-					Win32Window *currProgram =
-					    &windowArray->window[windowIndex];
-					// TODO(doyle): Since our window enumeration method is not
-					// reliable, sometimes we pick up two windows from the same
-					// PID, so we also check to see if we've validated the entry
-					// before yet.
-					if (currProgram->pid == (DWORD)listEntryPid &&
-					    !arrayEntryValidated[windowIndex])
+					wchar_t entryString[ARRAY_COUNT(currProgram->title)] = {};
+					LRESULT entryStringLen = SendMessage(
+					    listBox, LB_GETTEXT, itemIndex, (LPARAM)entryString);
+					ASSERT(entryStringLen != LB_ERR);
+
+					if (common_wstrcmp(currProgram->title, entryString) != 0)
 					{
-						char entryString[ARRAY_COUNT(currProgram->title)] = {};
-						LRESULT entryStringLen =
-						    SendMessage(listBox, LB_GETTEXT, itemIndex,
-						                (LPARAM)entryString);
-						ASSERT(entryStringLen != LB_ERR);
+						LRESULT insertIndex =
+						    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
+						                (LPARAM)currProgram->title);
+						ASSERT(insertIndex == itemIndex);
 
-						if (common_strcmp(currProgram->title, entryString) != 0)
-						{
-							LRESULT insertIndex =
-							    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
-							                (LPARAM)currProgram->title);
-							ASSERT(insertIndex == itemIndex);
+						LRESULT result =
+						    SendMessage(listBox, LB_SETITEMDATA, itemIndex,
+						                currProgram->pid);
+						ASSERT(result != LB_ERR);
 
-							LRESULT result =
-							    SendMessage(listBox, LB_SETITEMDATA, itemIndex,
-							                currProgram->pid);
-							ASSERT(result != LB_ERR);
-
-							LRESULT itemCount = SendMessage(
-							    listBox, LB_DELETESTRING, itemIndex + 1, 0);
-							ASSERT(itemCount == listSize);
-						}
-
-						arrayEntryValidated[windowIndex] = true;
-						programInListStillRunning        = true;
-						break;
+						LRESULT itemCount = SendMessage(
+						    listBox, LB_DELETESTRING, itemIndex + 1, 0);
+						ASSERT(itemCount == listSize);
 					}
-				}
 
-				if (!programInListStillRunning)
+					arrayEntryValidated[itemIndex] = true;
+					programInListStillRunning        = true;
+				}
+				else if (currProgram->pid != (DWORD)listEntryPid)
 				{
-					LRESULT result =
-					    SendMessage(listBox, LB_DELETESTRING, itemIndex, 0);
+					LRESULT insertIndex =
+					    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
+					                (LPARAM)currProgram->title);
+					ASSERT(insertIndex == itemIndex);
+
+					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
+					                             itemIndex, currProgram->pid);
 					ASSERT(result != LB_ERR);
+
+					LRESULT itemCount =
+					    SendMessage(listBox, LB_DELETESTRING, itemIndex + 1, 0);
+					ASSERT(itemCount == listSize);
+
+					arrayEntryValidated[itemIndex] = true;
+					programInListStillRunning        = true;
 				}
 			}
 
-			for (i32 i = 0; i < windowArray->index; i++)
+			if (listSize < windowArray->index)
 			{
-				if (!arrayEntryValidated[i])
+				for (i32 i = listSize; i < windowArray->index; i++)
 				{
 					Win32Window *window = &windowArray->window[i];
 					LRESULT insertIndex = SendMessage(listBox, LB_ADDSTRING, 0,
@@ -499,9 +564,82 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					ASSERT(result != LB_ERR);
 				}
 			}
+			else
+			{
+				for (i32 i = windowArray->index; i < listSize; i++)
+				{
+					LRESULT result =
+					    SendMessage(listBox, LB_DELETESTRING, i, 0);
+					ASSERT(result != LB_ERR);
+				}
+			}
 
-			Win32WindowArray emptyArray = {};
-			state.windowList            = emptyArray;
+			{ // Get Line from Edit Control
+
+				HWND editBox = state.window[windowtype_input_search_entries];
+				// NOTE: Set first char as size of buffer as required by win32
+				wchar_t editBoxText[MAX_WINDOW_TITLE_LEN] = {};
+				editBoxText[0] = MAX_WINDOW_TITLE_LEN;
+
+				LRESULT numCharsCopied =
+				    SendMessage(editBox, EM_GETLINE, 0, (LPARAM)editBoxText);
+
+				if (numCharsCopied > 0)
+				{
+
+					ASSERT(numCharsCopied < MAX_WINDOW_TITLE_LEN);
+					Win32WindowArray *array = &state.windowList;
+
+					i32 listIndexToDelete[ARRAY_COUNT(array->window)] = {};
+					i32 listIndex                                    = 0;
+
+					for (i32 i = 0; i < array->index; i++)
+					{
+						Win32Window *window = &array->window[i];
+						bool textMatches    = true;
+
+						wchar_t *editChar   = editBoxText;
+						wchar_t *windowChar = window->title;
+						for (; *editChar && *windowChar;
+						     editChar++, windowChar++)
+						{
+							if (*editChar != *windowChar)
+							{
+								textMatches = false;
+								break;
+							}
+						}
+
+						if (!textMatches)
+						{
+							LRESULT result = SendMessage(
+							    listBox, LB_DELETESTRING, i, 0);
+							ASSERT(result != LB_ERR);
+
+							for (i32 j = i; j + 1 < array->index; j++)
+							{
+								array->window[j] = array->window[j + 1];
+							}
+
+							i--;
+							array->index--;
+							if (array->index >= 0)
+							{
+								Win32Window emptyWindow     = {};
+								array->window[array->index] = emptyWindow;
+							}
+						}
+					}
+
+					int x = 6;
+				}
+			}
+		}
+
+		while (PeekMessage(&msg, mainWindowHandle, 0, 0, PM_REMOVE))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
 		}
 
 		LARGE_INTEGER endWorkTime = getWallClock();
@@ -520,10 +658,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		    getTimeFromQueryPerfCounter(startFrameTime, endFrameTime);
 		f32 msPerFrame = 1000.0f * frameTimeInS;
 
-		char windowTitleBuffer[128] = {};
-		_snprintf_s(windowTitleBuffer, ARRAY_COUNT(windowTitleBuffer),
-		            ARRAY_COUNT(windowTitleBuffer), "Winjump | %5.2f ms/f",
-		            msPerFrame);
+		wchar_t windowTitleBuffer[128] = {};
+		_snwprintf_s(windowTitleBuffer, ARRAY_COUNT(windowTitleBuffer),
+		             ARRAY_COUNT(windowTitleBuffer), L"Winjump | %5.2f ms/f",
+		             msPerFrame);
 		SetWindowText(mainWindowHandle, windowTitleBuffer);
 	}
 
