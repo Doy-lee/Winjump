@@ -28,18 +28,21 @@ REM Zi enables debug data, Z7 combines the debug files into one.
 REM W4 warning level 4
 REM WX treat warnings as errors
 REM wd4100 ignore unused argument parameters
+REM wd4201 ignore nonstandard extension used: nameless struct/union
 
-set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -wd4100
+set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100 -wd4201
 
 REM Include directories
 set includeFlags=
 
 REM Link libraries
 set linkLibraries=user32.lib gdi32.lib
-set linkFlags=-incremental:no -opt:ref
-set compileFiles= ..\src\*.cpp
 
-cl %compileFlags% %compileFiles% %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /OUT:"winjump.exe"
+REM incrmenetal:no, turn incremental builds off
+REM opt:ref, try to remove functions from libs that are referenced at all
+set linkFlags=-incremental:no -opt:ref
+
+cl %compileFlags% ..\src\winjump.cpp %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /nologo /OUT:"winjump.exe"
 
 popd
 ctime -end winjump.ctm

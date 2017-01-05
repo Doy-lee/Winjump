@@ -19,12 +19,12 @@
 // TODO(doyle): Platform layer separation
 GLOBAL_VAR bool globalRunning;
 
-typedef struct Win32Window
+typedef struct Win32Program
 {
 	wchar_t title[256];
 	HWND    handle;
 	DWORD   pid;
-} Win32Window;
+} Win32Program;
 
 enum WindowTypeIndex
 {
@@ -34,11 +34,11 @@ enum WindowTypeIndex
 	windowtype_count,
 };
 
-typedef struct Win32WindowArray
+typedef struct Win32ProgramArray
 {
-	Win32Window window[128];
-	i32         index;
-} Win32WindowArray;
+	Win32Program item[128];
+	i32          index;
+} Win32ProgramArray;
 
 typedef struct WinjumpState
 {
@@ -49,17 +49,13 @@ typedef struct WinjumpState
 	HFONT defaultFont;
 	HWND  window[windowtype_count];
 
+	WNDPROC defaultWindowProc;
+	WNDPROC defaultWindowProcEditBox;
+
 	f32   listUpdateTimer;
 	f32   listUpdateRateInS;
-	Win32WindowArray windowList;
+	Win32ProgramArray programArray;
 } WinjumpState;
-
-typedef struct Win32Input
-{
-	i32 prevScrollX;
-	i32 prevScrollY;
-} Win32Input;
-GLOBAL_VAR Win32Input input = {};
 
 enum Win32Resources
 {
@@ -68,7 +64,7 @@ enum Win32Resources
 };
 
 #define OFFSET_TO_STATE_PTR 0
-#define MAX_WINDOW_TITLE_LEN ARRAY_COUNT(((Win32Window *)0)->title)
+#define MAX_WINDOW_TITLE_LEN ARRAY_COUNT(((Win32Program *)0)->title)
 
 INTERNAL void winjump_displayWindow(HWND windowHandle)
 {
@@ -84,10 +80,10 @@ INTERNAL void winjump_displayWindow(HWND windowHandle)
 
 BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 {
-	Win32WindowArray *windowArr = (Win32WindowArray *)lParam;
-	if ((windowArr->index + 1) < ARRAY_COUNT(windowArr->window))
+	Win32ProgramArray *programArray = (Win32ProgramArray *)lParam;
+	if ((programArray->index + 1) < ARRAY_COUNT(programArray->item))
 	{
-		Win32Window window = {};
+		Win32Program window = {};
 		GetWindowText(windowHandle, window.title, MAX_WINDOW_TITLE_LEN);
 
 		// If we receive an empty string as a window title, then we want to
@@ -111,8 +107,8 @@ BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 				if (IsWindowVisible(lastPopup) && lastPopup == windowHandle)
 				{
 					GetWindowThreadProcessId(windowHandle, &window.pid);
-					window.handle                         = windowHandle;
-					windowArr->window[windowArr->index++] = window;
+					window.handle                              = windowHandle;
+					programArray->item[programArray->index++] = window;
 					break;
 				}
 
@@ -131,27 +127,49 @@ BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 	}
 }
 
-LOCAL_PERSIST WNDPROC originalWindowProc;
-INTERNAL LRESULT CALLBACK hotkeyWindowProcCallback(HWND window, UINT msg,
-                                                   WPARAM wParam, LPARAM lParam)
+INTERNAL LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
+                                                         UINT msg,
+                                                         WPARAM wParam,
+                                                         LPARAM lParam)
 {
+	WinjumpState *state =
+	    (WinjumpState *)GetWindowLongPtr(editWindow, GWLP_USERDATA);
+
 	LRESULT result = 0;
 	switch (msg)
 	{
-		case WM_HOTKEY:
+		case WM_SYSKEYDOWN:
+		case WM_SYSKEYUP:
+		case WM_KEYDOWN:
+		case WM_KEYUP:
 		{
-			WinjumpState *state =
-			    (WinjumpState *)GetWindowLongPtr(window, GWLP_USERDATA);
-			state->hotkeyPulledFocus = true;
-
-			winjump_displayWindow(window);
+			u32 vkCode = wParam;
+			// bool keyWasDown = ((lParam & (1 << 30)) != 0);
+			bool keyIsDown  = ((lParam & (1 << 31)) == 0);
+			if (keyIsDown)
+			{
+				switch (vkCode)
+				{
+					case VK_RETURN:
+					{
+						if (state->programArray.index > 0)
+						{
+							Win32Program programToShow =
+							    state->programArray.item[0];
+							winjump_displayWindow(programToShow.handle);
+							SendMessage(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
+						}
+					}
+					break;
+				}
+			}
 		}
 		break;
 
 		default:
 		{
-			return CallWindowProc(originalWindowProc, window, msg, wParam,
-			                      lParam);
+			return CallWindowProc(state->defaultWindowProcEditBox, editWindow,
+			                      msg, wParam, lParam);
 		}
 		break;
 	}
@@ -159,20 +177,27 @@ INTERNAL LRESULT CALLBACK hotkeyWindowProcCallback(HWND window, UINT msg,
 	return result;
 }
 
-INTERNAL LRESULT CALLBACK
-mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
+INTERNAL LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
+                                                 WPARAM wParam, LPARAM lParam)
 {
 	LRESULT result = 0;
+
+	WinjumpState *state = nullptr;
+	if (msg == WM_CREATE)
+	{
+		CREATESTRUCT *win32DeriveStruct = (CREATESTRUCT *)lParam;
+		state = (WinjumpState *)win32DeriveStruct->lpCreateParams;
+		SetWindowLongPtr(window, OFFSET_TO_STATE_PTR, (LONG_PTR)state);
+	}
+	else
+	{
+		state = (WinjumpState *)GetWindowLongPtr(window, OFFSET_TO_STATE_PTR);
+	}
 
 	switch (msg)
 	{
 		case WM_CREATE:
 		{
-			CREATESTRUCT *win32DeriveStruct = (CREATESTRUCT *)lParam;
-			WinjumpState *state =
-			    (WinjumpState *)win32DeriveStruct->lpCreateParams;
-			SetWindowLongPtr(window, OFFSET_TO_STATE_PTR, (LONG_PTR)state);
-
 			RECT clientRect;
 			GetClientRect(window, &clientRect);
 
@@ -199,6 +224,11 @@ mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 			  NULL
 			);
 			state->window[windowtype_input_search_entries] = editHandle;
+			SetFocus(editHandle);
+			state->defaultWindowProcEditBox =
+			    (WNDPROC)SetWindowLongPtr(editHandle, GWLP_WNDPROC,
+			                     (LONG_PTR)captureEnterWindowProcCallback);
+			SetWindowLongPtr(editHandle, GWLP_USERDATA, (LONG_PTR)state);
 
 			v2 listP       = V2(editP.x, (editP.y + editHeight + margin));
 			i32 listWidth  = clientWidth - (2 * margin);
@@ -254,99 +284,53 @@ mainWindowProcCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 		case WM_COMMAND:
 		{
 			WORD notificationCode = HIWORD((DWORD)wParam);
-			WORD listBoxId        = LOWORD((DWORD)wParam);
 			HWND handle           = (HWND)lParam;
-
-			WinjumpState *state =
-			    (WinjumpState *)GetWindowLongPtr(window, OFFSET_TO_STATE_PTR);
 			if (handle == state->window[win32resource_list])
 			{
 				if (notificationCode == LBN_SELCHANGE)
 				{
-					Win32WindowArray array = state->windowList;
+					Win32ProgramArray programArray = state->programArray;
 					LRESULT selectedIndex =
 					    SendMessage(handle, LB_GETCURSEL, 0, 0);
 
 					// NOTE: LB_ERR if list unselected
 					if (selectedIndex != LB_ERR)
 					{
-						ASSERT(selectedIndex < ARRAY_COUNT(array.window));
+						ASSERT(selectedIndex < ARRAY_COUNT(programArray.item));
 
-						Win32Window windowToShow = array.window[selectedIndex];
+						Win32Program programToShow =
+						    programArray.item[selectedIndex];
 						LRESULT itemPid = SendMessage(handle, LB_GETITEMDATA,
 						                              selectedIndex, 0);
-						ASSERT((u32)itemPid == windowToShow.pid);
+						ASSERT((u32)itemPid == programToShow.pid);
 
-						SendMessage(handle, LB_SETCURSEL, -1, 0);
+						SendMessage(handle, LB_SETCURSEL, (WPARAM)-1, 0);
 
-						winjump_displayWindow(windowToShow.handle);
+						winjump_displayWindow(programToShow.handle);
 					}
 				}
 			}
 		}
 		break;
 
-		case WM_DESTROY:
 		case WM_CLOSE:
+		case WM_DESTROY:
 		{
 			globalRunning = false;
 		}
 		break;
 
+		case WM_HOTKEY:
+		{
+			winjump_displayWindow(window);
+
+			HWND editBox = state->window[windowtype_input_search_entries];
+			SetFocus(editBox);
+		}
+		break;
+
 		case WM_SIZE:
 		{
-		}
-		break;
-
-		case WM_SYSKEYDOWN:
-		case WM_SYSKEYUP:
-		case WM_KEYDOWN:
-		case WM_KEYUP:
-		{
-			u32 vkCode = wParam;
-
-			bool keyWasDown = ((lParam & (1 << 30)) != 0);
-			bool keyIsDown  = ((lParam & (1 << 31)) == 0);
-
-			if (keyIsDown)
-			{
-				switch (vkCode)
-				{
-
-					case VK_LBUTTON:
-					case VK_RBUTTON:
-					case VK_MBUTTON:
-					{
-						i32 index = 0;
-						if (vkCode == VK_RBUTTON)
-							index = 1;
-						else if (vkCode == VK_MBUTTON)
-							index = 2;
-					}
-
-					break;
-				}
-			}
-		}
-		break;
-
-		case WM_MOUSEWHEEL:
-		{
-			i32 keyModifiers = GET_KEYSTATE_WPARAM(wParam);
-			i16 wheelDelta   = GET_WHEEL_DELTA_WPARAM(wParam);
-
-			i32 xPos = GET_X_LPARAM(lParam);
-			i32 yPos = GET_Y_LPARAM(lParam);
-
-			i32 deltaX = xPos - input.prevScrollX;
-			i32 deltaY = yPos - input.prevScrollY;
-
-			if (deltaY > 0)
-			{
-			}
-			else if (deltaY < 0)
-			{
-			}
 		}
 		break;
 
@@ -446,11 +430,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRect(&r, windowStyle, FALSE);
 
+	globalRunning           = true;
 	WinjumpState state      = {};
 	state.init              = true;
 	state.listUpdateRateInS = 0.5f;
 	state.listUpdateTimer   = state.listUpdateRateInS;
-	globalRunning           = true;
+	state.defaultWindowProc = mainWindowProcCallback;
 
 	HWND mainWindowHandle =
 	    CreateWindowEx(0, wc.lpszClassName, L"Winjump", windowStyle,
@@ -464,7 +449,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	}
 	state.window[windowtype_main_client] = mainWindowHandle;
 
-    QueryPerformanceFrequency(&globalQueryPerformanceFrequency);
+#define GUID_HOTKEY_ACTIVATE_APP 10983
+	ASSERT(RegisterHotKey(mainWindowHandle, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT,
+	                      'K'));
+
+	QueryPerformanceFrequency(&globalQueryPerformanceFrequency);
 
 	LARGE_INTEGER startFrameTime;
 	f32 targetSecondsPerFrame = 1 / 16.0f;
@@ -480,20 +469,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		{
 			state.listUpdateTimer = 0.0f;
 
-			Win32WindowArray *windowArray = &state.windowList;
-			Win32WindowArray emptyArray = {};
-			state.windowList            = emptyArray;
-			ASSERT(windowArray->index == 0);
+			Win32ProgramArray *programArray = &state.programArray;
+			Win32ProgramArray emptyArray    = {};
+			state.programArray              = emptyArray;
+			ASSERT(programArray->index == 0);
 
-			EnumWindows(EnumWindowsProcCallback, (LPARAM)windowArray);
+			EnumWindows(EnumWindowsProcCallback, (LPARAM)programArray);
 
-			bool arrayEntryValidated[ARRAY_COUNT(windowArray->window)] = {};
+			bool arrayEntryValidated[ARRAY_COUNT(programArray->item)] = {};
 
 			HWND listBox     = state.window[windowtype_list_window_entries];
 			LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
 
+			LRESULT listFirstVisibleIndex =
+			    SendMessage(listBox, LB_GETTOPINDEX, 0, 0);
+
 			for (LRESULT itemIndex = 0;
-			     (itemIndex < listSize) && (itemIndex < windowArray->index);
+			     (itemIndex < listSize) && (itemIndex < programArray->index);
 			     itemIndex++)
 			{
 				bool programInListStillRunning = false;
@@ -501,7 +493,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				    SendMessage(listBox, LB_GETITEMDATA, itemIndex, 0);
 				ASSERT(listEntryPid != LB_ERR);
 
-				Win32Window *currProgram = &windowArray->window[itemIndex];
+				Win32Program *currProgram = &programArray->item[itemIndex];
 				if (currProgram->pid == (DWORD)listEntryPid &&
 				    !arrayEntryValidated[itemIndex])
 				{
@@ -528,7 +520,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					}
 
 					arrayEntryValidated[itemIndex] = true;
-					programInListStillRunning        = true;
+					programInListStillRunning      = true;
 				}
 				else if (currProgram->pid != (DWORD)listEntryPid)
 				{
@@ -550,23 +542,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				}
 			}
 
-			if (listSize < windowArray->index)
+			if (listSize < programArray->index)
 			{
-				for (i32 i = listSize; i < windowArray->index; i++)
+				for (i32 i = listSize; i < programArray->index; i++)
 				{
-					Win32Window *window = &windowArray->window[i];
+					Win32Program *program = &programArray->item[i];
 					LRESULT insertIndex = SendMessage(listBox, LB_ADDSTRING, 0,
-					                                  (LPARAM)window->title);
+					                                  (LPARAM)program->title);
 					ASSERT(insertIndex != LB_ERR);
 
 					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
-					                             insertIndex, window->pid);
+					                             insertIndex, program->pid);
 					ASSERT(result != LB_ERR);
 				}
 			}
 			else
 			{
-				for (i32 i = windowArray->index; i < listSize; i++)
+				for (i32 i = programArray->index; i < listSize; i++)
 				{
 					LRESULT result =
 					    SendMessage(listBox, LB_DELETESTRING, i, 0);
@@ -574,7 +566,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				}
 			}
 
-			{ // Get Line from Edit Control
+			{ // Get Line from Edit Control and Filter
 
 				HWND editBox = state.window[windowtype_input_search_entries];
 				// NOTE: Set first char as size of buffer as required by win32
@@ -588,22 +580,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				{
 
 					ASSERT(numCharsCopied < MAX_WINDOW_TITLE_LEN);
-					Win32WindowArray *array = &state.windowList;
-
-					i32 listIndexToDelete[ARRAY_COUNT(array->window)] = {};
-					i32 listIndex                                    = 0;
-
-					for (i32 i = 0; i < array->index; i++)
+					for (i32 i = 0; i < programArray->index; i++)
 					{
-						Win32Window *window = &array->window[i];
+						Win32Program *program = &programArray->item[i];
 						bool textMatches    = true;
 
 						wchar_t *editChar   = editBoxText;
-						wchar_t *windowChar = window->title;
-						for (; *editChar && *windowChar;
-						     editChar++, windowChar++)
+						wchar_t *titleChar = program->title;
+						for (; *editChar && *titleChar;
+						     editChar++, titleChar++)
 						{
-							if (*editChar != *windowChar)
+							if (*editChar != *titleChar)
 							{
 								textMatches = false;
 								break;
@@ -616,24 +603,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 							    listBox, LB_DELETESTRING, i, 0);
 							ASSERT(result != LB_ERR);
 
-							for (i32 j = i; j + 1 < array->index; j++)
+							for (i32 j = i; j + 1 < programArray->index; j++)
 							{
-								array->window[j] = array->window[j + 1];
+								programArray->item[j] =
+								    programArray->item[j + 1];
 							}
 
 							i--;
-							array->index--;
-							if (array->index >= 0)
+							programArray->index--;
+							if (programArray->index >= 0)
 							{
-								Win32Window emptyWindow     = {};
-								array->window[array->index] = emptyWindow;
+								Win32Program emptyProgram          = {};
+								programArray->item[programArray->index] =
+								    emptyProgram;
 							}
 						}
 					}
-
-					int x = 6;
 				}
 			}
+
+			SendMessage(listBox, LB_SETTOPINDEX, listFirstVisibleIndex, 0);
 		}
 
 		while (PeekMessage(&msg, mainWindowHandle, 0, 0, PM_REMOVE))
