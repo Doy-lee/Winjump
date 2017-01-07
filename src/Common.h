@@ -29,7 +29,7 @@ typedef union v2 {
 	struct { f32 w, h; };
 } v2;
 
-v2 V2(f32 x, f32 y)
+inline INTERNAL v2 V2(f32 x, f32 y)
 {
 	v2 result = {};
 	result.x  = x;
@@ -38,13 +38,13 @@ v2 V2(f32 x, f32 y)
 	return result;
 }
 
-v2 V2i(i32 x, i32 y)
+inline INTERNAL v2 V2i(i32 x, i32 y)
 {
 	v2 result = V2((f32)x, (f32)y);
 	return result;
 }
 
-i32 common_strcmp(const char *a, const char *b)
+inline INTERNAL i32 common_strcmp(const char *a, const char *b)
 {
 	while ((*a) == (*b))
 	{
@@ -56,7 +56,7 @@ i32 common_strcmp(const char *a, const char *b)
 	return (((*a) < (*b)) ? -1 : 1);
 }
 
-i32 common_wstrcmp(const wchar_t *a, const wchar_t *b)
+inline INTERNAL i32 common_wstrcmp(const wchar_t *a, const wchar_t *b)
 {
 	while ((*a) == (*b))
 	{
@@ -68,8 +68,21 @@ i32 common_wstrcmp(const wchar_t *a, const wchar_t *b)
 	return (((*a) < (*b)) ? -1 : 1);
 }
 
+inline INTERNAL wchar_t common_wcharAsciiToLowercase(wchar_t character)
+{
+	ASSERT(character >= 0 && character <= 127);
 
-i32 common_strlen(const char *a)
+	if (character >= L'A' && character <= L'Z')
+	{
+		i32 shiftOffset = L'a' - L'A';
+		character += (wchar_t)shiftOffset;
+	}
+
+	return character;
+}
+
+
+inline INTERNAL i32 common_strlen(const char *a)
 {
 	i32 result = 0;
 	while ((*a))

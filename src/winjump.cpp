@@ -17,11 +17,21 @@
 
 // TODO(doyle): Organise all our globals siting around.
 // TODO(doyle): Platform layer separation
+// TODO(doyle): Store process EXE name so we can also search by that in the text
+// filtering
+// TODO(doyle): Search by index in list to help drilldown after the initial
+// search
+// TODO(doyle): Stop screen flickering by having better listbox updating
+// mechanisms
+// TODO(doyle): Clean up this cesspool.
+
 GLOBAL_VAR bool globalRunning;
 
 typedef struct Win32Program
 {
 	wchar_t title[256];
+	i32     titleLen;
+
 	HWND    handle;
 	DWORD   pid;
 } Win32Program;
@@ -42,18 +52,11 @@ typedef struct Win32ProgramArray
 
 typedef struct WinjumpState
 {
-	bool  init;
-	bool  keyboardActivityThisFrame;
-	bool  hotkeyPulledFocus;
-	v2    frameBufferSize;
 	HFONT defaultFont;
 	HWND  window[windowtype_count];
 
 	WNDPROC defaultWindowProc;
 	WNDPROC defaultWindowProcEditBox;
-
-	f32   listUpdateTimer;
-	f32   listUpdateRateInS;
 	Win32ProgramArray programArray;
 } WinjumpState;
 
@@ -84,11 +87,13 @@ BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 	if ((programArray->index + 1) < ARRAY_COUNT(programArray->item))
 	{
 		Win32Program window = {};
-		GetWindowText(windowHandle, window.title, MAX_WINDOW_TITLE_LEN);
+		i32 titleLen =
+		    GetWindowText(windowHandle, window.title, MAX_WINDOW_TITLE_LEN);
+		window.titleLen = titleLen;
 
 		// If we receive an empty string as a window title, then we want to
 		// ignore it. So if the string is defined, then we increment index
-		if (window.title[0])
+		if (titleLen > 0)
 		{
 			/*
 			   SIMULATING ALT-TAB WINDOW RESULTS by Raymond Chen
@@ -145,26 +150,36 @@ INTERNAL LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 		{
 			u32 vkCode = wParam;
 			// bool keyWasDown = ((lParam & (1 << 30)) != 0);
-			bool keyIsDown  = ((lParam & (1 << 31)) == 0);
-			if (keyIsDown)
+			// bool keyIsDown = ((lParam & (1 << 31)) == 0);
+
+			switch (vkCode)
 			{
-				switch (vkCode)
+				case VK_RETURN:
 				{
-					case VK_RETURN:
+					if (state->programArray.index > 0)
 					{
-						if (state->programArray.index > 0)
-						{
-							Win32Program programToShow =
-							    state->programArray.item[0];
-							winjump_displayWindow(programToShow.handle);
-							SendMessage(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
-						}
+						Win32Program programToShow =
+						    state->programArray.item[0];
+						winjump_displayWindow(programToShow.handle);
+						SendMessage(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
 					}
-					break;
 				}
+				break;
 			}
 		}
 		break;
+
+		// NOTE: Stop Window Bell on pressing on Enter
+		case WM_CHAR:
+		{
+			switch (wParam)
+			{
+				case VK_RETURN:
+				{
+					return 0;
+				}
+			}
+		}
 
 		default:
 		{
@@ -432,9 +447,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	globalRunning           = true;
 	WinjumpState state      = {};
-	state.init              = true;
-	state.listUpdateRateInS = 0.5f;
-	state.listUpdateTimer   = state.listUpdateRateInS;
 	state.defaultWindowProc = mainWindowProcCallback;
 
 	HWND mainWindowHandle =
@@ -459,16 +471,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	f32 targetSecondsPerFrame = 1 / 16.0f;
 	f32 frameTimeInS = 0.0f;
 
+	ASSERT(common_wcharAsciiToLowercase(L'A') == L'a');
+	ASSERT(common_wcharAsciiToLowercase(L'a') == L'a');
+	ASSERT(common_wcharAsciiToLowercase(L' ') == L' ');
+
 	MSG msg;
 	while (globalRunning)
 	{
 		startFrameTime = getWallClock();
 
-		state.listUpdateTimer += frameTimeInS;
-		if (state.listUpdateTimer >= state.listUpdateRateInS)
 		{
-			state.listUpdateTimer = 0.0f;
-
 			Win32ProgramArray *programArray = &state.programArray;
 			Win32ProgramArray emptyArray    = {};
 			state.programArray              = emptyArray;
@@ -558,13 +570,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			}
 			else
 			{
+				wchar_t listEntries[128][256] = {};
+				debug_checkWin32ListContents(listBox, listEntries);
+
 				for (i32 i = programArray->index; i < listSize; i++)
 				{
 					LRESULT result =
 					    SendMessage(listBox, LB_DELETESTRING, i, 0);
 					ASSERT(result != LB_ERR);
+
+					wchar_t inLoopListEntries[128][256] = {};
+					debug_checkWin32ListContents(listBox, inLoopListEntries);
 				}
 			}
+
+			// TODO(doyle): Currently filtering will refilter the list every
+			// time, causing reflashing on the screen as the control updates
+			// multiple times per second. We should have a "changed" flag or
+			// something so we can just keep the old list if nothing has changed
+			// or, only change the ones that have changed.
 
 			{ // Get Line from Edit Control and Filter
 
@@ -583,18 +607,49 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					for (i32 i = 0; i < programArray->index; i++)
 					{
 						Win32Program *program = &programArray->item[i];
-						bool textMatches    = true;
+						wchar_t *titleWords[32]       = {};
+						i32 titleWordsIndex           = 0;
+						titleWords[titleWordsIndex++] = program->title;
 
-						wchar_t *editChar   = editBoxText;
-						wchar_t *titleChar = program->title;
-						for (; *editChar && *titleChar;
-						     editChar++, titleChar++)
+						// TODO(doyle): Be smart, split by more than just
+						// spaces, like file directories
+						for (i32 j = 1; j + 1 < program->titleLen; j++)
 						{
-							if (*editChar != *titleChar)
+							wchar_t *checkSpace    = &program->title[j];
+							wchar_t *oneAfterSpace = &program->title[j + 1];
+							if (*checkSpace == L' ' && *oneAfterSpace != L' ')
 							{
-								textMatches = false;
-								break;
+								// NOTE: Beginning of new word
+								titleWords[titleWordsIndex++] = oneAfterSpace;
 							}
+						}
+
+						bool textMatches = true;
+						for (i32 j = 0; j < titleWordsIndex; j++)
+						{
+							textMatches        = true;
+							wchar_t *editChar  = editBoxText;
+							wchar_t *titleChar = titleWords[j];
+
+							// TODO(doyle): Right now words are split by spaces
+							// and we semantically separate them by giving out
+							// ptrs to each word (from the same word
+							// allocation), delimiting it by spaces
+							for (; *editChar && *titleChar && *titleChar != ' ';
+							     editChar++, titleChar++)
+							{
+								wchar_t editCharLowercase =
+								    common_wcharAsciiToLowercase(*editChar);
+								wchar_t titleCharLowercase =
+								    common_wcharAsciiToLowercase(*titleChar);
+								if (editCharLowercase != titleCharLowercase)
+								{
+									textMatches = false;
+									break;
+								}
+							}
+
+							if (textMatches) break;
 						}
 
 						if (!textMatches)
