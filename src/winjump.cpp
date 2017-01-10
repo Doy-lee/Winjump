@@ -58,6 +58,9 @@ typedef struct WinjumpState
 	WNDPROC defaultWindowProc;
 	WNDPROC defaultWindowProcEditBox;
 	Win32ProgramArray programArray;
+
+	// TODO(doyle): Use this flag to reduce the times the window reupdates
+	bool currentlyFiltering;
 } WinjumpState;
 
 enum Win32Resources
@@ -253,7 +256,8 @@ INTERNAL LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 			  WS_EX_CLIENTEDGE,
 			  L"LISTBOX",
 			  NULL,
-			  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY,
+			  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |  WS_HSCROLL
+			  | LBS_NOTIFY,
 			  (i32)listP.x,
 			  (i32)listP.y,
 			  listWidth,
@@ -488,11 +492,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 			EnumWindows(EnumWindowsProcCallback, (LPARAM)programArray);
 
-			bool arrayEntryValidated[ARRAY_COUNT(programArray->item)] = {};
 
 			HWND listBox     = state.window[windowtype_list_window_entries];
 			LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
-
 			LRESULT listFirstVisibleIndex =
 			    SendMessage(listBox, LB_GETTOPINDEX, 0, 0);
 
@@ -500,57 +502,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			     (itemIndex < listSize) && (itemIndex < programArray->index);
 			     itemIndex++)
 			{
-				bool programInListStillRunning = false;
-				LRESULT listEntryPid =
-				    SendMessage(listBox, LB_GETITEMDATA, itemIndex, 0);
-				ASSERT(listEntryPid != LB_ERR);
-
 				Win32Program *currProgram = &programArray->item[itemIndex];
-				if (currProgram->pid == (DWORD)listEntryPid &&
-				    !arrayEntryValidated[itemIndex])
-				{
-					wchar_t entryString[ARRAY_COUNT(currProgram->title)] = {};
-					LRESULT entryStringLen = SendMessage(
-					    listBox, LB_GETTEXT, itemIndex, (LPARAM)entryString);
-					ASSERT(entryStringLen != LB_ERR);
 
-					if (common_wstrcmp(currProgram->title, entryString) != 0)
-					{
-						LRESULT insertIndex =
-						    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
-						                (LPARAM)currProgram->title);
-						ASSERT(insertIndex == itemIndex);
-
-						LRESULT result =
-						    SendMessage(listBox, LB_SETITEMDATA, itemIndex,
-						                currProgram->pid);
-						ASSERT(result != LB_ERR);
-
-						LRESULT itemCount = SendMessage(
-						    listBox, LB_DELETESTRING, itemIndex + 1, 0);
-						ASSERT(itemCount == listSize);
-					}
-
-					arrayEntryValidated[itemIndex] = true;
-					programInListStillRunning      = true;
-				}
-				else if (currProgram->pid != (DWORD)listEntryPid)
+				// IMPORTANT: We set item data for the entry, so the entry
+				// must exist before we check PID. We create this entry when
+				// we check the string to see if it exists as the index.
+				// Compare program title strings
+				wchar_t entryString[ARRAY_COUNT(currProgram->title)] = {};
+				LRESULT entryStringLen = SendMessage(
+				    listBox, LB_GETTEXT, itemIndex, (LPARAM)entryString);
+				ASSERT(entryStringLen != LB_ERR);
+				if (common_wstrcmp(currProgram->title, entryString) != 0)
 				{
 					LRESULT insertIndex =
 					    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
 					                (LPARAM)currProgram->title);
 					ASSERT(insertIndex == itemIndex);
 
-					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
-					                             itemIndex, currProgram->pid);
-					ASSERT(result != LB_ERR);
-
 					LRESULT itemCount =
 					    SendMessage(listBox, LB_DELETESTRING, itemIndex + 1, 0);
 					ASSERT(itemCount == listSize);
+				}
 
-					arrayEntryValidated[itemIndex] = true;
-					programInListStillRunning        = true;
+				// Compare list entry item data, pid
+				LRESULT listEntryPid =
+				    SendMessage(listBox, LB_GETITEMDATA, itemIndex, 0);
+				ASSERT(listEntryPid != LB_ERR);
+				if (currProgram->pid != (DWORD)listEntryPid)
+				{
+					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
+					                             itemIndex, currProgram->pid);
+					ASSERT(result != LB_ERR);
 				}
 			}
 
@@ -587,13 +569,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			// TODO(doyle): Currently filtering will refilter the list every
 			// time, causing reflashing on the screen as the control updates
 			// multiple times per second. We should have a "changed" flag or
-			// something so we can just keep the old list if nothing has changed
-			// or, only change the ones that have changed.
+			// something so we can just keep the old list if nothing has
+			// changed or, only change the ones that have changed.
 
 			{ // Get Line from Edit Control and Filter
-
 				HWND editBox = state.window[windowtype_input_search_entries];
-				// NOTE: Set first char as size of buffer as required by win32
+				// NOTE: Set first char as size of buffer as required by
+				// win32
 				wchar_t editBoxText[MAX_WINDOW_TITLE_LEN] = {};
 				editBoxText[0] = MAX_WINDOW_TITLE_LEN;
 
@@ -602,11 +584,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 				if (numCharsCopied > 0)
 				{
-
+					state.currentlyFiltering = true;
 					ASSERT(numCharsCopied < MAX_WINDOW_TITLE_LEN);
 					for (i32 i = 0; i < programArray->index; i++)
 					{
-						Win32Program *program = &programArray->item[i];
+						Win32Program *program         = &programArray->item[i];
 						wchar_t *titleWords[32]       = {};
 						i32 titleWordsIndex           = 0;
 						titleWords[titleWordsIndex++] = program->title;
@@ -631,8 +613,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 							wchar_t *editChar  = editBoxText;
 							wchar_t *titleChar = titleWords[j];
 
-							// TODO(doyle): Right now words are split by spaces
-							// and we semantically separate them by giving out
+							// TODO(doyle): Right now words are split by
+							// spaces
+							// and we semantically separate them by giving
+							// out
 							// ptrs to each word (from the same word
 							// allocation), delimiting it by spaces
 							for (; *editChar && *titleChar && *titleChar != ' ';
@@ -654,8 +638,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 						if (!textMatches)
 						{
-							LRESULT result = SendMessage(
-							    listBox, LB_DELETESTRING, i, 0);
+							LRESULT result =
+							    SendMessage(listBox, LB_DELETESTRING, i, 0);
 							ASSERT(result != LB_ERR);
 
 							for (i32 j = i; j + 1 < programArray->index; j++)
@@ -668,7 +652,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 							programArray->index--;
 							if (programArray->index >= 0)
 							{
-								Win32Program emptyProgram          = {};
+								Win32Program emptyProgram = {};
 								programArray->item[programArray->index] =
 								    emptyProgram;
 							}
@@ -676,9 +660,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					}
 				}
 			}
-
 			SendMessage(listBox, LB_SETTOPINDEX, listFirstVisibleIndex, 0);
 		}
+
 
 		while (PeekMessage(&msg, mainWindowHandle, 0, 0, PM_REMOVE))
 		{

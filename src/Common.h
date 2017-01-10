@@ -70,8 +70,6 @@ inline INTERNAL i32 common_wstrcmp(const wchar_t *a, const wchar_t *b)
 
 inline INTERNAL wchar_t common_wcharAsciiToLowercase(wchar_t character)
 {
-	ASSERT(character >= 0 && character <= 127);
-
 	if (character >= L'A' && character <= L'Z')
 	{
 		i32 shiftOffset = L'a' - L'A';
