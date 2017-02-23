@@ -27,10 +27,11 @@ REM Zi enables debug data, Z7 combines the debug files into one.
 
 REM W4 warning level 4
 REM WX treat warnings as errors
-REM wd4100 ignore unused argument parameters
-REM wd4201 ignore nonstandard extension used: nameless struct/union
+REM wd4100 ignore: unused argument parameters
+REM wd4201 ignore: nonstandard extension used: nameless struct/union
+REM wd4189 ignore: local variable is initialised but not referenced
 
-set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100 -wd4201
+set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100 -wd4201 -wd4189
 
 REM Include directories
 set includeFlags=
