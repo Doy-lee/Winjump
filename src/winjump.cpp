@@ -13,7 +13,10 @@
 
 #include <Windows.h>
 #include <Windowsx.h>
+#include <Shlwapi.h>
 #include <commctrl.h>
+
+#include <stdio.h>
 
 // TODO(doyle): Organise all our globals siting around.
 // TODO(doyle): Platform layer separation
@@ -32,7 +35,10 @@ typedef struct Win32Program
 	wchar_t title[256];
 	i32     titleLen;
 
-	HWND    handle;
+	wchar_t exe[256];
+	i32     exeLen;
+
+	HWND    window;
 	DWORD   pid;
 } Win32Program;
 
@@ -70,29 +76,50 @@ enum Win32Resources
 };
 
 #define OFFSET_TO_STATE_PTR 0
-#define MAX_WINDOW_TITLE_LEN ARRAY_COUNT(((Win32Program *)0)->title)
+#define MAX_PROGRAM_TITLE_LEN ARRAY_COUNT(((Win32Program *)0)->title)
 
-FILE_SCOPE void winjump_displayWindow(HWND windowHandle)
+FILE_SCOPE void winjump_displayWindow(HWND window)
 {
 
 	// IsIconic == if window is minimised
-	if (IsIconic(windowHandle))
+	if (IsIconic(window))
 	{
-		ShowWindow(windowHandle, SW_RESTORE);
+		ShowWindow(window, SW_RESTORE);
 	}
 
-	SetForegroundWindow(windowHandle);
+	SetForegroundWindow(window);
 }
 
-BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
+// Create the friendly name for representation in the list box
+// - out: The output buffer
+// - outLen: Length of the output buffer
+
+// Returns the number of characters stored into the buffer
+FILE_SCOPE i32 winjump_getProgramFriendlyName(const Win32Program *program,
+                                              wchar_t *out, i32 outLen)
+{
+	// +1 for null terminator
+	const char additionalCharsToAdd[] = {' ', '-', ' '};
+	i32 friendlyNameLen = program->titleLen + program->exeLen +
+	                      ARRAY_COUNT(additionalCharsToAdd) + 1;
+
+	ASSERT(outLen >= friendlyNameLen);
+
+	i32 numStored = _snwprintf_s(out, outLen, outLen, L"%s - %s",
+	                             program->title, program->exe);
+
+	return numStored;
+}
+
+BOOL CALLBACK EnumWindowsProcCallback(HWND window, LPARAM lParam)
 {
 	Win32ProgramArray *programArray = (Win32ProgramArray *)lParam;
 	if ((programArray->index + 1) < ARRAY_COUNT(programArray->item))
 	{
-		Win32Program window = {};
+		Win32Program program = {};
 		i32 titleLen =
-		    GetWindowText(windowHandle, window.title, MAX_WINDOW_TITLE_LEN);
-		window.titleLen = titleLen;
+		    GetWindowText(window, program.title, MAX_PROGRAM_TITLE_LEN);
+		program.titleLen = titleLen;
 
 		// If we receive an empty string as a window title, then we want to
 		// ignore it. So if the string is defined, then we increment index
@@ -107,16 +134,37 @@ BOOL CALLBACK EnumWindowsProcCallback(HWND windowHandle, LPARAM lParam)
 			   where you're started, then put the window in the Alt+Tab list.
 			 */
 
-			HWND rootWindow = GetAncestor(windowHandle, GA_ROOTOWNER);
+			HWND rootWindow = GetAncestor(window, GA_ROOTOWNER);
 			HWND lastPopup;
 			do
 			{
 				lastPopup = GetLastActivePopup(rootWindow);
-				if (IsWindowVisible(lastPopup) && lastPopup == windowHandle)
+				if (IsWindowVisible(lastPopup) && lastPopup == window)
 				{
-					GetWindowThreadProcessId(windowHandle, &window.pid);
-					window.handle                              = windowHandle;
-					programArray->item[programArray->index++] = window;
+					GetWindowThreadProcessId(window, &program.pid);
+
+					program.window = window;
+					HANDLE handle  = OpenProcess(
+					    PROCESS_QUERY_LIMITED_INFORMATION, FALSE, program.pid);
+					if (handle != nullptr)
+					{
+						DWORD len   = ARRAY_COUNT(program.exe);
+						BOOL result = QueryFullProcessImageName(
+						    handle, 0, program.exe, &len);
+						ASSERT(result != 0);
+
+						// Len is input as the initial size of array, it then
+						// gets modified and returns the number of characters in
+						// the result. If len is then the len of the array,
+						// there's potential that the path name got clipped.
+						ASSERT(len != ARRAY_COUNT(program.exe));
+
+						PathStripPath(program.exe);
+						program.exeLen = common_wstrlen(program.exe);
+						CloseHandle(handle);
+					}
+
+					programArray->item[programArray->index++] = program;
 					break;
 				}
 
@@ -163,7 +211,7 @@ FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 					{
 						Win32Program programToShow =
 						    state->programArray.item[0];
-						winjump_displayWindow(programToShow.handle);
+						winjump_displayWindow(programToShow.window);
 						SendMessage(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
 					}
 				}
@@ -333,7 +381,7 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 
 						SendMessage(handle, LB_SETCURSEL, (WPARAM)-1, 0);
 
-						winjump_displayWindow(programToShow.handle);
+						winjump_displayWindow(programToShow.window);
 					}
 				}
 			}
@@ -416,7 +464,6 @@ i32 debug_getListEntrySize(wchar_t listEntries[128][256])
 	return result;
 }
 
-#include <stdio.h>
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd)
 {
@@ -461,25 +508,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	WinjumpState state      = {};
 	state.defaultWindowProc = mainWindowProcCallback;
 
-	HWND mainWindowHandle =
+	HWND mainWindow =
 	    CreateWindowEx(0, wc.lpszClassName, L"Winjump", windowStyle,
 	                   CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
 	                   r.bottom - r.top, NULL, NULL, hInstance, &state);
-	if (!mainWindowHandle)
+	if (!mainWindow)
 	{
 		// TODO(doyle): Logging, couldn't create root window
 		ASSERT(INVALID_CODE_PATH);
 		return -1;
 	}
-	state.window[winjumpwindows_main_client] = mainWindowHandle;
+	state.window[winjumpwindows_main_client] = mainWindow;
 
 #define GUID_HOTKEY_ACTIVATE_APP 10983
-	RegisterHotKey(mainWindowHandle, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
+	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
 	QueryPerformanceFrequency(&globalQueryPerformanceFrequency);
 
 	LARGE_INTEGER startFrameTime;
-	f32 targetSecondsPerFrame = 1 / 16.0f;
-	f32 frameTimeInS = 0.0f;
+	const f32 targetFramesPerSecond = 8.0f;
+	f32 targetSecondsPerFrame       = 1 / targetFramesPerSecond;
+	f32 frameTimeInS                = 0.0f;
 
 	ASSERT(common_wcharAsciiToLowercase(L'A') == L'a');
 	ASSERT(common_wcharAsciiToLowercase(L'a') == L'a');
@@ -516,15 +564,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				// must exist before we check PID. We create this entry when
 				// we check the string to see if it exists as the index.
 				// Compare program title strings
-				wchar_t entryString[ARRAY_COUNT(currProgram->title)] = {};
-				LRESULT entryStringLen = SendMessage(
-				    listBox, LB_GETTEXT, itemIndex, (LPARAM)entryString);
 
-				if (common_wstrcmp(currProgram->title, entryString) != 0)
+				// TODO(doyle): Tighten memory alloc using len vars in program
+				// TODO(doyle): snprintf?
+
+				// NOTE: +4 for the " - " and the null terminator
+				const i32 len = ARRAY_COUNT(currProgram->title) +
+				                ARRAY_COUNT(currProgram->exe) + 4;
+				wchar_t friendlyName[len] = {};
+				winjump_getProgramFriendlyName(currProgram, friendlyName, len);
+
+				wchar_t entryString[len] = {};
+				LRESULT entryStringLen   = SendMessage(
+				    listBox, LB_GETTEXT, itemIndex, (LPARAM)entryString);
+				if (common_wstrcmp(friendlyName, entryString) != 0)
 				{
 					LRESULT insertIndex =
 					    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
-					                (LPARAM)currProgram->title);
+					                (LPARAM)friendlyName);
 
 					LRESULT itemCount =
 					    SendMessage(listBox, LB_DELETESTRING, itemIndex + 1, 0);
@@ -545,24 +602,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				for (i32 i = listSize; i < programArray->index; i++)
 				{
 					Win32Program *program = &programArray->item[i];
+					const i32 len = ARRAY_COUNT(program->title) +
+					                ARRAY_COUNT(program->exe) + 4;
+					wchar_t friendlyName[len] = {};
+					winjump_getProgramFriendlyName(program, friendlyName, len);
+
 					LRESULT insertIndex = SendMessage(listBox, LB_ADDSTRING, 0,
-					                                  (LPARAM)program->title);
+					                                  (LPARAM)friendlyName);
 					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
 					                             insertIndex, program->pid);
 				}
 			}
 			else
 			{
-				wchar_t listEntries[128][256] = {};
-				debug_checkWin32ListContents(listBox, listEntries);
-
 				for (i32 i = programArray->index; i < listSize; i++)
 				{
 					LRESULT result =
 					    SendMessage(listBox, LB_DELETESTRING, i, 0);
-
-					wchar_t inLoopListEntries[128][256] = {};
-					debug_checkWin32ListContents(listBox, inLoopListEntries);
 				}
 			}
 
@@ -579,8 +635,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		{
 			HWND editBox = state.window[winjumpwindows_input_search_entries];
 			// NOTE: Set first char is size of buffer as required by win32
-			wchar_t editBoxText[MAX_WINDOW_TITLE_LEN] = {};
-			editBoxText[0]                            = MAX_WINDOW_TITLE_LEN;
+			wchar_t editBoxText[MAX_PROGRAM_TITLE_LEN] = {};
+			editBoxText[0]                            = MAX_PROGRAM_TITLE_LEN;
 
 			LRESULT numCharsCopied =
 			    SendMessage(editBox, EM_GETLINE, 0, (LPARAM)editBoxText);
@@ -591,17 +647,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 				for (i32 i = 0; i < programArray->index; i++)
 				{
-					Win32Program *program         = &programArray->item[i];
+					Win32Program *program = &programArray->item[i];
+					const i32 len         = ARRAY_COUNT(program->title) +
+					                        ARRAY_COUNT(program->exe) + 4;
+					wchar_t friendlyName[len] = {};
+					winjump_getProgramFriendlyName(program, friendlyName, len);
+
+					// TODO(doyle): Hardcoded arbitrary limit
 					wchar_t *titleWords[32]       = {};
 					i32 titleWordsIndex           = 0;
 					titleWords[titleWordsIndex++] = program->title;
 
 					// TODO(doyle): Be smart, split by more than just
 					// spaces, like file directories
-					for (i32 j = 1; j + 1 < program->titleLen; j++)
+					for (i32 j = 1; j + 1 < len; j++)
 					{
-						wchar_t *checkSpace    = &program->title[j];
-						wchar_t *oneAfterSpace = &program->title[j + 1];
+						wchar_t *checkSpace    = &friendlyName[j];
+						wchar_t *oneAfterSpace = &friendlyName[j + 1];
 						if (*checkSpace == L' ' && *oneAfterSpace != L' ')
 						{
 							// NOTE: Beginning of new word
@@ -662,7 +724,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			}
 		}
 
-		while (PeekMessage(&msg, mainWindowHandle, 0, 0, PM_REMOVE))
+		while (PeekMessage(&msg, mainWindow, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
@@ -688,7 +750,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		_snwprintf_s(windowTitleBuffer, ARRAY_COUNT(windowTitleBuffer),
 		             ARRAY_COUNT(windowTitleBuffer), L"Winjump | %5.2f ms/f",
 		             msPerFrame);
-		SetWindowText(mainWindowHandle, windowTitleBuffer);
+		SetWindowText(mainWindow, windowTitleBuffer);
 	}
 
 	return 0;

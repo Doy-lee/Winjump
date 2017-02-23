@@ -73,6 +73,22 @@ inline FILE_SCOPE i32 common_wstrcmp(const wchar_t *a, const wchar_t *b)
 	return (((*a) < (*b)) ? -1 : 1);
 }
 
+inline FILE_SCOPE void common_wstrcat(const wchar_t *a, i32 lenA,
+                                      const wchar_t *b, i32 lenB, wchar_t *out,
+                                      i32 outLen)
+{
+	ASSERT((lenA + lenB) < outLen);
+
+	i32 outIndex = 0;
+	for (i32 i = 0; i < lenA; i++)
+		out[outIndex++] = a[i];
+
+	for (i32 i = 0; i < lenB; i++)
+		out[outIndex++] = b[i];
+
+	ASSERT(outIndex <= outLen);
+}
+
 inline FILE_SCOPE wchar_t common_wcharAsciiToLowercase(wchar_t character)
 {
 	if (character >= L'A' && character <= L'Z')
@@ -84,6 +100,17 @@ inline FILE_SCOPE wchar_t common_wcharAsciiToLowercase(wchar_t character)
 	return character;
 }
 
+inline FILE_SCOPE i32 common_wstrlen(const wchar_t *a)
+{
+	i32 result = 0;
+	while ((*a))
+	{
+		result++;
+		a++;
+	}
+
+	return result;
+}
 
 inline FILE_SCOPE i32 common_strlen(const char *a)
 {
