@@ -508,10 +508,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	WinjumpState state      = {};
 	state.defaultWindowProc = mainWindowProcCallback;
 
-	HWND mainWindow =
-	    CreateWindowEx(0, wc.lpszClassName, L"Winjump", windowStyle,
-	                   CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
-	                   r.bottom - r.top, NULL, NULL, hInstance, &state);
+	HWND mainWindow = CreateWindowEx(
+	    WS_EX_COMPOSITED, wc.lpszClassName, L"Winjump", windowStyle,
+	    CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL,
+	    NULL, hInstance, &state);
+
 	if (!mainWindow)
 	{
 		// TODO(doyle): Logging, couldn't create root window
@@ -525,7 +526,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	QueryPerformanceFrequency(&globalQueryPerformanceFrequency);
 
 	LARGE_INTEGER startFrameTime;
-	const f32 targetFramesPerSecond = 8.0f;
+	const f32 targetFramesPerSecond = 16.0f;
 	f32 targetSecondsPerFrame       = 1 / targetFramesPerSecond;
 	f32 frameTimeInS                = 0.0f;
 
@@ -544,6 +545,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 		// Insert new programs into the list box and remove dead ones
 		{
+			// TODO(doyle): Separate ui update from internal state update
 			Win32ProgramArray emptyArray = {};
 			*programArray                = emptyArray;
 			ASSERT(programArray->index == 0);
