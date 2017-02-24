@@ -216,6 +216,12 @@ FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 					}
 				}
 				break;
+
+				default:
+				{
+					return CallWindowProc(state->defaultWindowProcEditBox,
+					                      editWindow, msg, wParam, lParam);
+				}
 			}
 		}
 		break;
@@ -236,6 +242,13 @@ FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 					HWND inputBox =
 					    state->window[winjumpwindows_input_search_entries];
 					SetWindowText(inputBox, L"");
+					return 0;
+				}
+
+				default:
+				{
+					return CallWindowProc(state->defaultWindowProcEditBox,
+					                      editWindow, msg, wParam, lParam);
 				}
 			}
 		}
@@ -245,7 +258,6 @@ FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 			return CallWindowProc(state->defaultWindowProcEditBox, editWindow,
 			                      msg, wParam, lParam);
 		}
-		break;
 	}
 
 	return result;
@@ -275,23 +287,17 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 			RECT clientRect;
 			GetClientRect(window, &clientRect);
 
-			i32 margin = 5;
-			LONG clientWidth  = clientRect.right;
-			LONG clientHeight = clientRect.bottom;
-
-			v2 editP       = V2i(margin, margin);
-			i32 editWidth  = clientWidth - (2 * margin);
-			i32 editHeight = 25;
-
+			// NOTE(doyle): Don't set position here, since creation sends
+			// a WM_SIZE, we just put all the size and position logic in there.
 			HWND editHandle = CreateWindowEx(
 			  WS_EX_CLIENTEDGE,
 			  L"EDIT",
 			  NULL,
 			  WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP,
-			  (i32)editP.x,
-			  (i32)editP.y,
-			  editWidth,
-			  editHeight,
+			  0,
+			  0,
+			  0,
+			  0,
 			  window,
 			  (HMENU)win32resource_edit_text_buffer,
 			  NULL,
@@ -304,20 +310,16 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 			                     (LONG_PTR)captureEnterWindowProcCallback);
 			SetWindowLongPtr(editHandle, GWLP_USERDATA, (LONG_PTR)state);
 
-			v2 listP       = V2(editP.x, (editP.y + editHeight + margin));
-			i32 listWidth  = clientWidth - (2 * margin);
-			i32 listHeight = clientHeight - (i32)editP.y - editHeight - margin;
-
 			HWND listHandle = CreateWindowEx(
-			  WS_EX_CLIENTEDGE,
+			  WS_EX_CLIENTEDGE | WS_EX_COMPOSITED,
 			  L"LISTBOX",
 			  NULL,
 			  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |  WS_HSCROLL
 			  | LBS_NOTIFY,
-			  (i32)listP.x,
-			  (i32)listP.y,
-			  listWidth,
-			  listHeight,
+			  0, // x
+			  0, // y
+			  0, // width
+			  0, // height
 			  window,
 			  (HMENU)win32resource_list,
 			  NULL,
@@ -406,6 +408,38 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 
 		case WM_SIZE:
 		{
+			RECT clientRect;
+			GetClientRect(window, &clientRect);
+			LONG clientWidth  = clientRect.right;
+			LONG clientHeight = clientRect.bottom;
+			const i32 margin  = 5;
+
+			{
+				// Resize the edit box that is used for filtering
+				HWND editWindow =
+				    state->window[winjumpwindows_input_search_entries];
+
+				v2 editP           = V2i(margin, margin);
+				i32 editWidth      = clientWidth - (2 * margin);
+				i32 editHeight     = 25;
+
+				MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, editWidth,
+				           editHeight, TRUE);
+
+				// Resize the edit box that is used for filtering
+				HWND listWindow =
+				    state->window[winjumpwindows_list_window_entries];
+
+				v2 listP      = V2(editP.x, (editP.y + editHeight + margin));
+				i32 listWidth = clientWidth - (2 * margin);
+				i32 listHeight =
+				    clientHeight - (i32)editP.y - editHeight - margin;
+
+				MoveWindow(listWindow, (i32)listP.x, (i32)listP.y, listWidth,
+				           listHeight, TRUE);
+			}
+
+			result = DefWindowProc(window, msg, wParam, lParam);
 		}
 		break;
 
@@ -554,6 +588,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 			const LRESULT listFirstVisibleIndex =
 			    SendMessage(listBox, LB_GETTOPINDEX, 0, 0);
+
 			const LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
 
 			for (LRESULT itemIndex = 0;
