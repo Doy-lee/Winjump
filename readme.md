@@ -1,9 +1,9 @@
 # Winjump
 ![Winjump Screenshots](docs/winjump.png)
 
-Winjump is a utility that allows moving between windows on the desktop quicker. I.e. programming in Vim and need to go to some other window without move hands from the home keys.
+Winjump is a utility that allows moving between windows on the desktop quicker, for example, you're programming in Vim and want to go to some other window without moving your hand from the home keys. Or you want a text-based alternative to ALT-Tabbing which can be faster if you know exactly what application you want to switch to.
 
-Currently this project is mostly to play around and learn different things so the implementation is rough and crude. At the moment it is running using GLFW and ImGUI to get it up quickly, as a result it has a high memory footprint. It is statically linked to GLFW and the C-Runtime library so there should not be too many dependencies other than the default Windows libraries.
+The project is currently built using the WIN32API with minimal external libraries. As a result it's a single file executable with little to no dependencies and has a light footprint.
 
 # Usage
 1. Press ALT-K (non-configurable at the moment) to activate the Window.
