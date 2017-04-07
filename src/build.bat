@@ -8,7 +8,10 @@ ctags -R
 REM Check if build tool is on path
 REM >nul, 2>nul will remove the output text from the where command
 where cl.exe >nul 2>nul
-if %errorlevel%==1 call msvc86.bat
+if %errorlevel%==1 (
+	echo MSVC CL not on path, please add it to path to build by command line.
+	goto end
+)
 
 REM Drop compilation files into build folder
 IF NOT EXIST ..\bin mkdir ..\bin
@@ -46,4 +49,7 @@ set linkFlags=-incremental:no -opt:ref
 cl %compileFlags% ..\src\winjump.cpp %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /nologo /OUT:"winjump.exe"
 
 popd
+
+:end
 ctime -end winjump.ctm
+

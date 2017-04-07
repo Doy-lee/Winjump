@@ -11,11 +11,4 @@ The project is currently built using the WIN32API with minimal external librarie
 3. Press enter when name matches the window name.
 
 # Build
-Project is developed under Visual Studio 2015, but probably works with other version. You can either build using the IDE, but there's also provided a build.bat file using Visual Studio build tools. Only 32 bit has been configured, the 64bit components are there, just not configured into the build steps yet.
-
-All files are included with repository, so should be able to build as is.
-
-### Build Dependencies
-* [GLFW - Multiplatform OpenGL/Window Library](http://www.glfw.org/)
-* [ImGui - Immediate Mode Graphical User interface](https://github.com/ocornut/imgui)
-* [GL3W - Simple OpenGL core profile loading](https://github.com/skaslev/gl3w)
+Project is developed under Visual Studio 2015. You can build using the provided solution. There's also a build.bat file using Visual Studio build tools for command line compilation.
