@@ -1,5 +1,6 @@
-#define UNICODE
-#define _UNICODE
+#define DQN_IMPLEMENTATION // Enable the implementation
+#define DQN_MAKE_STATIC    // Make all functions be static
+#include "dqn.h"
 
 #ifndef VC_EXTRALEAN
   #define VC_EXTRALEAN
@@ -9,9 +10,6 @@
   #define WIN32_LEAN_AND_MEAN
 #endif
 
-#include "Common.h"
-
-#include <Windows.h>
 #include <Windowsx.h>
 #include <Shlwapi.h>
 #include <commctrl.h>
@@ -28,7 +26,43 @@
 // mechanisms
 // TODO(doyle): Clean up this cesspool.
 
-GLOBAL_VAR bool globalRunning;
+FILE_SCOPE i32 wstrlen(const wchar_t *a)
+{
+	i32 result = 0;
+	while (a && a[result]) result++;
+	return result;
+}
+
+FILE_SCOPE inline i32 wstrcmp(const wchar_t *a, const wchar_t *b)
+{
+	if (!a && !b) return -1;
+	if (!a) return -1;
+	if (!b) return -1;
+
+	while ((*a) == (*b))
+	{
+		if (!(*a)) return 0;
+		a++;
+		b++;
+	}
+
+	return (((*a) < (*b)) ? -1 : 1);
+}
+
+
+FILE_SCOPE inline wchar_t wchar_to_lower(const wchar_t a)
+{
+	if (a >= L'A' && a <= L'Z')
+	{
+		i32 shiftOffset = L'a' - L'A';
+		return (a + (wchar_t)shiftOffset);
+	}
+
+	return a;
+}
+
+
+FILE_SCOPE bool globalRunning;
 
 typedef struct Win32Program
 {
@@ -76,9 +110,9 @@ enum Win32Resources
 };
 
 #define OFFSET_TO_STATE_PTR 0
-#define MAX_PROGRAM_TITLE_LEN ARRAY_COUNT(((Win32Program *)0)->title)
+#define MAX_PROGRAM_TITLE_LEN DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 
-FILE_SCOPE void winjump_displayWindow(HWND window)
+FILE_SCOPE void winjump_display_window(HWND window)
 {
 
 	// IsIconic == if window is minimised
@@ -95,15 +129,15 @@ FILE_SCOPE void winjump_displayWindow(HWND window)
 // - outLen: Length of the output buffer
 
 // Returns the number of characters stored into the buffer
-FILE_SCOPE i32 winjump_getProgramFriendlyName(const Win32Program *program,
+FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
                                               wchar_t *out, i32 outLen)
 {
 	// +1 for null terminator
 	const char additionalCharsToAdd[] = {' ', '-', ' '};
 	i32 friendlyNameLen = program->titleLen + program->exeLen +
-	                      ARRAY_COUNT(additionalCharsToAdd) + 1;
+	                      DQN_ARRAY_COUNT(additionalCharsToAdd) + 1;
 
-	ASSERT(outLen >= friendlyNameLen);
+	DQN_ASSERT(outLen >= friendlyNameLen);
 
 	i32 numStored = _snwprintf_s(out, outLen, outLen, L"%s - %s",
 	                             program->title, program->exe);
@@ -111,14 +145,14 @@ FILE_SCOPE i32 winjump_getProgramFriendlyName(const Win32Program *program,
 	return numStored;
 }
 
-BOOL CALLBACK EnumWindowsProcCallback(HWND window, LPARAM lParam)
+BOOL CALLBACK win32_enum_procs_callback(HWND window, LPARAM lParam)
 {
 	Win32ProgramArray *programArray = (Win32ProgramArray *)lParam;
-	if ((programArray->index + 1) < ARRAY_COUNT(programArray->item))
+	if ((programArray->index + 1) < DQN_ARRAY_COUNT(programArray->item))
 	{
 		Win32Program program = {};
 		i32 titleLen =
-		    GetWindowText(window, program.title, MAX_PROGRAM_TITLE_LEN);
+		    GetWindowTextW(window, program.title, MAX_PROGRAM_TITLE_LEN);
 		program.titleLen = titleLen;
 
 		// If we receive an empty string as a window title, then we want to
@@ -148,19 +182,19 @@ BOOL CALLBACK EnumWindowsProcCallback(HWND window, LPARAM lParam)
 					    PROCESS_QUERY_LIMITED_INFORMATION, FALSE, program.pid);
 					if (handle != nullptr)
 					{
-						DWORD len   = ARRAY_COUNT(program.exe);
-						BOOL result = QueryFullProcessImageName(
+						DWORD len   = DQN_ARRAY_COUNT(program.exe);
+						BOOL result = QueryFullProcessImageNameW(
 						    handle, 0, program.exe, &len);
-						ASSERT(result != 0);
+						DQN_ASSERT(result != 0);
 
 						// Len is input as the initial size of array, it then
 						// gets modified and returns the number of characters in
 						// the result. If len is then the len of the array,
 						// there's potential that the path name got clipped.
-						ASSERT(len != ARRAY_COUNT(program.exe));
+						DQN_ASSERT(len != DQN_ARRAY_COUNT(program.exe));
 
-						PathStripPath(program.exe);
-						program.exeLen = common_wstrlen(program.exe);
+						PathStripPathW(program.exe);
+						program.exeLen = wstrlen(program.exe);
 						CloseHandle(handle);
 					}
 
@@ -183,13 +217,13 @@ BOOL CALLBACK EnumWindowsProcCallback(HWND window, LPARAM lParam)
 	}
 }
 
-FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
-                                                           UINT msg,
-                                                           WPARAM wParam,
-                                                           LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
+                                                         UINT msg,
+                                                         WPARAM wParam,
+                                                         LPARAM lParam)
 {
 	WinjumpState *state =
-	    (WinjumpState *)GetWindowLongPtr(editWindow, GWLP_USERDATA);
+	    (WinjumpState *)GetWindowLongPtrW(editWindow, GWLP_USERDATA);
 
 	LRESULT result = 0;
 	switch (msg)
@@ -211,15 +245,15 @@ FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 					{
 						Win32Program programToShow =
 						    state->programArray.item[0];
-						winjump_displayWindow(programToShow.window);
-						SendMessage(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
+						winjump_display_window(programToShow.window);
+						SendMessageW(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
 					}
 				}
 				break;
 
 				default:
 				{
-					return CallWindowProc(state->defaultWindowProcEditBox,
+					return CallWindowProcW(state->defaultWindowProcEditBox,
 					                      editWindow, msg, wParam, lParam);
 				}
 			}
@@ -241,13 +275,13 @@ FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 					// If escape is pressed, empty the text
 					HWND inputBox =
 					    state->window[winjumpwindows_input_search_entries];
-					SetWindowText(inputBox, L"");
+					SetWindowTextW(inputBox, L"");
 					return 0;
 				}
 
 				default:
 				{
-					return CallWindowProc(state->defaultWindowProcEditBox,
+					return CallWindowProcW(state->defaultWindowProcEditBox,
 					                      editWindow, msg, wParam, lParam);
 				}
 			}
@@ -255,16 +289,16 @@ FILE_SCOPE LRESULT CALLBACK captureEnterWindowProcCallback(HWND editWindow,
 
 		default:
 		{
-			return CallWindowProc(state->defaultWindowProcEditBox, editWindow,
-			                      msg, wParam, lParam);
+			return CallWindowProcW(state->defaultWindowProcEditBox, editWindow,
+			                       msg, wParam, lParam);
 		}
 	}
 
 	return result;
 }
 
-FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
-                                                   WPARAM wParam, LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
+                                                WPARAM wParam, LPARAM lParam)
 {
 	LRESULT result = 0;
 
@@ -273,11 +307,11 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 	{
 		CREATESTRUCT *win32DeriveStruct = (CREATESTRUCT *)lParam;
 		state = (WinjumpState *)win32DeriveStruct->lpCreateParams;
-		SetWindowLongPtr(window, OFFSET_TO_STATE_PTR, (LONG_PTR)state);
+		SetWindowLongPtrW(window, OFFSET_TO_STATE_PTR, (LONG_PTR)state);
 	}
 	else
 	{
-		state = (WinjumpState *)GetWindowLongPtr(window, OFFSET_TO_STATE_PTR);
+		state = (WinjumpState *)GetWindowLongPtrW(window, OFFSET_TO_STATE_PTR);
 	}
 
 	switch (msg)
@@ -289,7 +323,7 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 
 			// NOTE(doyle): Don't set position here, since creation sends
 			// a WM_SIZE, we just put all the size and position logic in there.
-			HWND editHandle = CreateWindowEx(
+			HWND editHandle = CreateWindowExW(
 			  WS_EX_CLIENTEDGE,
 			  L"EDIT",
 			  NULL,
@@ -305,12 +339,12 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 			);
 			state->window[winjumpwindows_input_search_entries] = editHandle;
 			SetFocus(editHandle);
-			state->defaultWindowProcEditBox =
-			    (WNDPROC)SetWindowLongPtr(editHandle, GWLP_WNDPROC,
-			                     (LONG_PTR)captureEnterWindowProcCallback);
-			SetWindowLongPtr(editHandle, GWLP_USERDATA, (LONG_PTR)state);
+			state->defaultWindowProcEditBox = (WNDPROC)SetWindowLongPtrW(
+			    editHandle, GWLP_WNDPROC,
+			    (LONG_PTR)win32_capture_enter_callback);
+			SetWindowLongPtrW(editHandle, GWLP_USERDATA, (LONG_PTR)state);
 
-			HWND listHandle = CreateWindowEx(
+			HWND listHandle = CreateWindowExW(
 			  WS_EX_CLIENTEDGE | WS_EX_COMPOSITED,
 			  L"LISTBOX",
 			  NULL,
@@ -331,9 +365,9 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 				NONCLIENTMETRICS metrics = {};
 				metrics.cbSize           = sizeof(NONCLIENTMETRICS);
 
-				i32 readFontResult =
-				    SystemParametersInfo(SPI_GETNONCLIENTMETRICS,
-				                         sizeof(NONCLIENTMETRICS), &metrics, 0);
+				i32 readFontResult = SystemParametersInfo(
+				    SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &metrics,
+				    0);
 
 				if (readFontResult)
 				{
@@ -343,7 +377,7 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 					for (i32 i = 0; i < winjumpwindows_count; i++)
 					{
 						HWND windowToSendMsg = state->window[i];
-						SendMessage(windowToSendMsg, WM_SETFONT,
+						SendMessageW(windowToSendMsg, WM_SETFONT,
 						            (WPARAM)state->defaultFont,
 						            redrawImmediately);
 					}
@@ -352,7 +386,7 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 				else
 				{
 					// TODO(doyle): Logging, default font query failed
-					ASSERT(INVALID_CODE_PATH);
+					DQN_ASSERT(DQN_INVALID_CODE_PATH);
 				}
 			}
 		}
@@ -368,22 +402,22 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 				{
 					Win32ProgramArray programArray = state->programArray;
 					LRESULT selectedIndex =
-					    SendMessage(handle, LB_GETCURSEL, 0, 0);
+					    SendMessageW(handle, LB_GETCURSEL, 0, 0);
 
 					// NOTE: LB_ERR if list unselected
 					if (selectedIndex != LB_ERR)
 					{
-						ASSERT(selectedIndex < ARRAY_COUNT(programArray.item));
+						DQN_ASSERT(selectedIndex < DQN_ARRAY_COUNT(programArray.item));
 
 						Win32Program programToShow =
 						    programArray.item[selectedIndex];
-						LRESULT itemPid = SendMessage(handle, LB_GETITEMDATA,
+						LRESULT itemPid = SendMessageW(handle, LB_GETITEMDATA,
 						                              selectedIndex, 0);
-						ASSERT((u32)itemPid == programToShow.pid);
+						DQN_ASSERT((u32)itemPid == programToShow.pid);
 
-						SendMessage(handle, LB_SETCURSEL, (WPARAM)-1, 0);
+						SendMessageW(handle, LB_SETCURSEL, (WPARAM)-1, 0);
 
-						winjump_displayWindow(programToShow.window);
+						winjump_display_window(programToShow.window);
 					}
 				}
 			}
@@ -399,7 +433,7 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 
 		case WM_HOTKEY:
 		{
-			winjump_displayWindow(window);
+			winjump_display_window(window);
 
 			HWND editBox = state->window[winjumpwindows_input_search_entries];
 			SetFocus(editBox);
@@ -419,9 +453,9 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 				HWND editWindow =
 				    state->window[winjumpwindows_input_search_entries];
 
-				v2 editP           = V2i(margin, margin);
-				i32 editWidth      = clientWidth - (2 * margin);
-				i32 editHeight     = 25;
+				DqnV2 editP    = dqn_v2i(margin, margin);
+				i32 editWidth  = clientWidth - (2 * margin);
+				i32 editHeight = 25;
 
 				MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, editWidth,
 				           editHeight, TRUE);
@@ -430,7 +464,7 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 				HWND listWindow =
 				    state->window[winjumpwindows_list_window_entries];
 
-				v2 listP      = V2(editP.x, (editP.y + editHeight + margin));
+				DqnV2 listP = dqn_v2(editP.x, (editP.y + editHeight + margin));
 				i32 listWidth = clientWidth - (2 * margin);
 				i32 listHeight =
 				    clientHeight - (i32)editP.y - editHeight - margin;
@@ -439,60 +473,16 @@ FILE_SCOPE LRESULT CALLBACK mainWindowProcCallback(HWND window, UINT msg,
 				           listHeight, TRUE);
 			}
 
-			result = DefWindowProc(window, msg, wParam, lParam);
+			result = DefWindowProcW(window, msg, wParam, lParam);
 		}
 		break;
 
 		default:
 		{
-			result = DefWindowProc(window, msg, wParam, lParam);
+			result = DefWindowProcW(window, msg, wParam, lParam);
 		}
 		break;
 
-	}
-
-	return result;
-}
-
-GLOBAL_VAR LARGE_INTEGER globalQueryPerformanceFrequency;
-inline FILE_SCOPE f32 getTimeFromQueryPerfCounter(LARGE_INTEGER start,
-                                                LARGE_INTEGER end)
-{
-	f32 result = (f32)(end.QuadPart - start.QuadPart) /
-	             globalQueryPerformanceFrequency.QuadPart;
-	return result;
-}
-
-inline LARGE_INTEGER getWallClock()
-{
-	LARGE_INTEGER result;
-	QueryPerformanceCounter(&result);
-
-	return result;
-}
-
-void debug_checkWin32ListContents(HWND listBox, wchar_t listEntries[128][256])
-{
-	LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
-	for (i32 i = 0; i < listSize; i++)
-	{
-		SendMessage(listBox, LB_GETTEXT, i, (LPARAM)listEntries[i]);
-	}
-}
-
-i32 debug_getListEntrySize(wchar_t listEntries[128][256])
-{
-	i32 result = 0;
-	for (i32 i = 0; i < 128; i++)
-	{
-		if (listEntries[i][0])
-		{
-			result++;
-		}
-		else
-		{
-			break;
-		}
 	}
 
 	return result;
@@ -503,11 +493,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 {
 	i32 bytesToReserveAfterWindowInst = sizeof(WinjumpState *);
 
-	WNDCLASSEX wc =
+	WNDCLASSEXW wc =
 	{
 		sizeof(WNDCLASSEX),
 		CS_HREDRAW | CS_VREDRAW,
-		mainWindowProcCallback,
+		win32_main_callback,
 		0, // int cbClsExtra
 		bytesToReserveAfterWindowInst, // int cbWndExtra
 		hInstance,
@@ -519,9 +509,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		NULL, // HICON hIconSm
 	};
 
-	if (!RegisterClassEx(&wc)) {
+	if (!RegisterClassExW(&wc)) {
 		// TODO(doyle): Logging, couldn't register class
-		ASSERT(INVALID_CODE_PATH);
+		DQN_WIN32_ERROR_BOX("RegisterClassExW() failed.", NULL);
 		return -1;
 	}
 
@@ -540,39 +530,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	globalRunning           = true;
 	WinjumpState state      = {};
-	state.defaultWindowProc = mainWindowProcCallback;
+	state.defaultWindowProc = win32_main_callback;
 
-	HWND mainWindow = CreateWindowEx(
+	HWND mainWindow = CreateWindowExW(
 	    WS_EX_COMPOSITED, wc.lpszClassName, L"Winjump", windowStyle,
 	    CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL,
 	    NULL, hInstance, &state);
 
 	if (!mainWindow)
 	{
-		// TODO(doyle): Logging, couldn't create root window
-		ASSERT(INVALID_CODE_PATH);
+		DQN_WIN32_ERROR_BOX("CreateWindowExW() failed.", NULL);
 		return -1;
 	}
 	state.window[winjumpwindows_main_client] = mainWindow;
 
 #define GUID_HOTKEY_ACTIVATE_APP 10983
 	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
-	QueryPerformanceFrequency(&globalQueryPerformanceFrequency);
 
-	LARGE_INTEGER startFrameTime;
 	const f32 targetFramesPerSecond = 16.0f;
 	f32 targetSecondsPerFrame       = 1 / targetFramesPerSecond;
+	f32 targetMsPerFrame            = targetSecondsPerFrame * 1000.0f;
 	f32 frameTimeInS                = 0.0f;
 
-	ASSERT(common_wcharAsciiToLowercase(L'A') == L'a');
-	ASSERT(common_wcharAsciiToLowercase(L'a') == L'a');
-	ASSERT(common_wcharAsciiToLowercase(L' ') == L' ');
+	DQN_ASSERT(wchar_to_lower(L'A') == L'a');
+	DQN_ASSERT(wchar_to_lower(L'a') == L'a');
+	DQN_ASSERT(wchar_to_lower(L' ') == L' ');
 
 	MSG msg;
 
 	while (globalRunning)
 	{
-		startFrameTime = getWallClock();
+		f64 startFrameTime = dqn_time_now_in_ms();
 
 		Win32ProgramArray *programArray = &state.programArray;
 		HWND listBox = state.window[winjumpwindows_list_window_entries];
@@ -582,14 +570,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			// TODO(doyle): Separate ui update from internal state update
 			Win32ProgramArray emptyArray = {};
 			*programArray                = emptyArray;
-			ASSERT(programArray->index == 0);
-
-			EnumWindows(EnumWindowsProcCallback, (LPARAM)programArray);
+			DQN_ASSERT(programArray->index == 0);
+			EnumWindows(win32_enum_procs_callback, (LPARAM)programArray);
 
 			const LRESULT listFirstVisibleIndex =
-			    SendMessage(listBox, LB_GETTOPINDEX, 0, 0);
+			    SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
 
-			const LRESULT listSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
+			const LRESULT listSize = SendMessageW(listBox, LB_GETCOUNT, 0, 0);
 
 			for (LRESULT itemIndex = 0;
 			     (itemIndex < listSize) && (itemIndex < programArray->index);
@@ -606,30 +593,31 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				// TODO(doyle): snprintf?
 
 				// NOTE: +4 for the " - " and the null terminator
-				const i32 len = ARRAY_COUNT(currProgram->title) +
-				                ARRAY_COUNT(currProgram->exe) + 4;
+				const i32 len = DQN_ARRAY_COUNT(currProgram->title) +
+				                DQN_ARRAY_COUNT(currProgram->exe) + 4;
 				wchar_t friendlyName[len] = {};
-				winjump_getProgramFriendlyName(currProgram, friendlyName, len);
+				winjump_get_program_friendly_name(currProgram, friendlyName,
+				                                  len);
 
 				wchar_t entryString[len] = {};
-				LRESULT entryStringLen   = SendMessage(
+				LRESULT entryStringLen   = SendMessageW(
 				    listBox, LB_GETTEXT, itemIndex, (LPARAM)entryString);
-				if (common_wstrcmp(friendlyName, entryString) != 0)
+				if (wstrcmp(friendlyName, entryString) != 0)
 				{
 					LRESULT insertIndex =
-					    SendMessage(listBox, LB_INSERTSTRING, itemIndex,
+					    SendMessageW(listBox, LB_INSERTSTRING, itemIndex,
 					                (LPARAM)friendlyName);
 
 					LRESULT itemCount =
-					    SendMessage(listBox, LB_DELETESTRING, itemIndex + 1, 0);
+					    SendMessageW(listBox, LB_DELETESTRING, itemIndex + 1, 0);
 				}
 
 				// Compare list entry item data, pid
 				LRESULT listEntryPid =
-				    SendMessage(listBox, LB_GETITEMDATA, itemIndex, 0);
+				    SendMessageW(listBox, LB_GETITEMDATA, itemIndex, 0);
 				if (currProgram->pid != (DWORD)listEntryPid)
 				{
-					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
+					LRESULT result = SendMessageW(listBox, LB_SETITEMDATA,
 					                             itemIndex, currProgram->pid);
 				}
 			}
@@ -639,14 +627,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				for (i32 i = listSize; i < programArray->index; i++)
 				{
 					Win32Program *program = &programArray->item[i];
-					const i32 len = ARRAY_COUNT(program->title) +
-					                ARRAY_COUNT(program->exe) + 4;
+					const i32 len = DQN_ARRAY_COUNT(program->title) +
+					                DQN_ARRAY_COUNT(program->exe) + 4;
 					wchar_t friendlyName[len] = {};
-					winjump_getProgramFriendlyName(program, friendlyName, len);
+					winjump_get_program_friendly_name(program, friendlyName, len);
 
-					LRESULT insertIndex = SendMessage(listBox, LB_ADDSTRING, 0,
+					LRESULT insertIndex = SendMessageW(listBox, LB_ADDSTRING, 0,
 					                                  (LPARAM)friendlyName);
-					LRESULT result = SendMessage(listBox, LB_SETITEMDATA,
+					LRESULT result = SendMessageW(listBox, LB_SETITEMDATA,
 					                             insertIndex, program->pid);
 				}
 			}
@@ -655,11 +643,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				for (i32 i = programArray->index; i < listSize; i++)
 				{
 					LRESULT result =
-					    SendMessage(listBox, LB_DELETESTRING, i, 0);
+					    SendMessageW(listBox, LB_DELETESTRING, i, 0);
 				}
 			}
 
-			SendMessage(listBox, LB_SETTOPINDEX, listFirstVisibleIndex, 0);
+			SendMessageW(listBox, LB_SETTOPINDEX, listFirstVisibleIndex, 0);
 		}
 
 		// TODO(doyle): Currently filtering will refilter the list every
@@ -676,19 +664,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			editBoxText[0]                            = MAX_PROGRAM_TITLE_LEN;
 
 			LRESULT numCharsCopied =
-			    SendMessage(editBox, EM_GETLINE, 0, (LPARAM)editBoxText);
+			    SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)editBoxText);
 			if (numCharsCopied > 0)
 			{
 				state.currentlyFiltering = true;
-				ASSERT(numCharsCopied < MAX_WINDOW_TITLE_LEN);
+				DQN_ASSERT(numCharsCopied < MAX_PROGRAM_TITLE_LEN);
 
 				for (i32 i = 0; i < programArray->index; i++)
 				{
 					Win32Program *program = &programArray->item[i];
-					const i32 len         = ARRAY_COUNT(program->title) +
-					                        ARRAY_COUNT(program->exe) + 4;
+					const i32 len         = DQN_ARRAY_COUNT(program->title) +
+					                        DQN_ARRAY_COUNT(program->exe) + 4;
 					wchar_t friendlyName[len] = {};
-					winjump_getProgramFriendlyName(program, friendlyName, len);
+					winjump_get_program_friendly_name(program, friendlyName,
+					                                  len);
 
 					// TODO(doyle): Hardcoded arbitrary limit
 					wchar_t *titleWords[32]       = {};
@@ -725,9 +714,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 						     editChar++, titleChar++)
 						{
 							wchar_t editCharLowercase =
-							    common_wcharAsciiToLowercase(*editChar);
+							    wchar_to_lower(*editChar);
 							wchar_t titleCharLowercase =
-							    common_wcharAsciiToLowercase(*titleChar);
+							    wchar_to_lower(*titleChar);
 							if (editCharLowercase != titleCharLowercase)
 							{
 								textMatches = false;
@@ -741,7 +730,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					if (!textMatches)
 					{
 						LRESULT result =
-						    SendMessage(listBox, LB_DELETESTRING, i, 0);
+						    SendMessageW(listBox, LB_DELETESTRING, i, 0);
 
 						for (i32 j = i; j + 1 < programArray->index; j++)
 						{
@@ -761,33 +750,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			}
 		}
 
-		while (PeekMessage(&msg, mainWindow, 0, 0, PM_REMOVE))
+		while (PeekMessageW(&msg, mainWindow, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
-			DispatchMessage(&msg);
+			DispatchMessageW(&msg);
 		}
 
-		LARGE_INTEGER endWorkTime = getWallClock();
-		f32 workTimeInS =
-		    getTimeFromQueryPerfCounter(startFrameTime, endWorkTime);
+		f64 endWorkTime  = dqn_time_now_in_ms();
+		f64 workTimeInMs = endWorkTime - startFrameTime;
 
-		if (workTimeInS < targetSecondsPerFrame)
+		if (workTimeInMs < targetMsPerFrame)
 		{
-			DWORD remainingTimeInMs =
-			    (DWORD)((targetSecondsPerFrame - workTimeInS) * 1000);
+			DWORD remainingTimeInMs = (DWORD)(targetMsPerFrame - workTimeInMs);
 			Sleep(remainingTimeInMs);
 		}
 
-		LARGE_INTEGER endFrameTime = getWallClock();
-		frameTimeInS =
-		    getTimeFromQueryPerfCounter(startFrameTime, endFrameTime);
-		f32 msPerFrame = 1000.0f * frameTimeInS;
+		f64 endFrameTime  = dqn_time_now_in_ms();
+		f64 frameTimeInMs = endFrameTime - startFrameTime;
 
 		wchar_t windowTitleBuffer[128] = {};
-		_snwprintf_s(windowTitleBuffer, ARRAY_COUNT(windowTitleBuffer),
-		             ARRAY_COUNT(windowTitleBuffer), L"Winjump | %5.2f ms/f",
-		             msPerFrame);
-		SetWindowText(mainWindow, windowTitleBuffer);
+		_snwprintf_s(windowTitleBuffer, DQN_ARRAY_COUNT(windowTitleBuffer),
+		             DQN_ARRAY_COUNT(windowTitleBuffer), L"Winjump | %5.2f ms/f",
+		             frameTimeInMs);
+		SetWindowTextW(mainWindow, windowTitleBuffer);
 	}
 
 	return 0;

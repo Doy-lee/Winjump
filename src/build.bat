@@ -33,8 +33,9 @@ REM WX treat warnings as errors
 REM wd4100 ignore: unused argument parameters
 REM wd4201 ignore: nonstandard extension used: nameless struct/union
 REM wd4189 ignore: local variable is initialised but not referenced
+REM wd4505 ignore: unreferenced local function not used will be removed
 
-set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100 -wd4201 -wd4189
+set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100 -wd4201 -wd4189 -wd4505 -Od
 
 REM Include directories
 set includeFlags=
