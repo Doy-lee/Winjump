@@ -13,6 +13,8 @@
 #include <Windowsx.h>
 #include <Shlwapi.h>
 #include <commctrl.h>
+// For win32 GetProcessMemoryInfo()
+#include <Psapi.h>
 
 #include <stdio.h>
 
@@ -143,12 +145,12 @@ typedef struct Win32Program
 	DWORD   pid;
 } Win32Program;
 
-
 enum WinjumpWindows
 {
 	winjumpwindow_main_client,
 	winjumpwindow_list_window_entries,
 	winjumpwindow_input_search_entries,
+	winjumpwindow_status_bar,
 	winjumpwindow_count,
 };
 
@@ -162,6 +164,7 @@ enum Win32Resources
 {
 	win32resource_edit_text_buffer,
 	win32resource_list,
+	win32resource_status_bar,
 };
 
 typedef struct WinjumpState
@@ -302,8 +305,7 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 						Win32Program programToShow =
 						    globalState.programArray.item[0];
 						win32_display_window(programToShow.window);
-
-						SendMessageW(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
+						SetWindowText(editWindow, "");
 						ShowWindow(
 						    globalState.window[winjumpwindow_main_client],
 						    SW_MINIMIZE);
@@ -365,12 +367,13 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 	{
 		case WM_CREATE:
 		{
-			RECT clientRect;
-			GetClientRect(window, &clientRect);
-
 			// NOTE(doyle): Don't set position here, since creation sends
 			// a WM_SIZE, we just put all the size and position logic in there.
-			HWND editHandle = CreateWindowExW(
+
+			////////////////////////////////////////////////////////////////////
+			// Create Edit Window
+			////////////////////////////////////////////////////////////////////
+			HWND editWindow = CreateWindowExW(
 			  WS_EX_CLIENTEDGE,
 			  L"EDIT",
 			  NULL,
@@ -384,13 +387,16 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  NULL,
 			  NULL
 			);
-			globalState.window[winjumpwindow_input_search_entries] = editHandle;
-			SetFocus(editHandle);
+			globalState.window[winjumpwindow_input_search_entries] = editWindow;
+			SetFocus(editWindow);
 			globalState.defaultWindowProcEditBox = (WNDPROC)SetWindowLongPtrW(
-			    editHandle, GWLP_WNDPROC,
+			    editWindow, GWLP_WNDPROC,
 			    (LONG_PTR)win32_capture_enter_callback);
 
-			HWND listHandle = CreateWindowExW(
+			////////////////////////////////////////////////////////////////////
+			// Create List Window
+			////////////////////////////////////////////////////////////////////
+			HWND listWindow = CreateWindowExW(
 			  WS_EX_CLIENTEDGE | WS_EX_COMPOSITED,
 			  L"LISTBOX",
 			  NULL,
@@ -405,9 +411,30 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  NULL,
 			  NULL
 			);
-			globalState.window[winjumpwindow_list_window_entries] = listHandle;
+			globalState.window[winjumpwindow_list_window_entries] = listWindow;
 
-			{ // Set To Use Default Font
+			////////////////////////////////////////////////////////////////////
+			// Create Status Bar
+			////////////////////////////////////////////////////////////////////
+			InitCommonControls();
+			HWND statusWindow = CreateWindowExW(
+			    0,                         // no extended styles
+			    STATUSCLASSNAMEW,          // name of status bar class
+			    NULL,                      // no text when first created
+			    SBARS_SIZEGRIP |           // includes a sizing grip
+			        WS_CHILD | WS_VISIBLE, // creates a visible child window
+			    0,
+			    0, 0, 0,                         // ignores size and position
+			    window,                          // parent
+			    (HMENU)win32resource_status_bar, // child window identifier
+			    NULL, // handle to application instance
+			    NULL);
+			globalState.window[winjumpwindow_status_bar] = statusWindow;
+
+			////////////////////////////////////////////////////////////////////
+			// Use Default Font
+			////////////////////////////////////////////////////////////////////
+			{
 				NONCLIENTMETRICS metrics = {};
 				metrics.cbSize           = sizeof(NONCLIENTMETRICS);
 
@@ -491,6 +518,14 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			LONG clientHeight = clientRect.bottom;
 			const i32 margin  = 5;
 
+			RECT statusBarRect;
+			GetClientRect(globalState.window[winjumpwindow_status_bar],
+			              &statusBarRect);
+			LONG statusBarHeight = statusBarRect.bottom;
+			LONG statusBarWidth  = statusBarRect.right;
+			////////////////////////////////////////////////////////////////////
+			// Position Edit Box and List Box
+			////////////////////////////////////////////////////////////////////
 			{
 				// Resize the edit box that is used for filtering
 				HWND editWindow =
@@ -503,19 +538,34 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, editWidth,
 				           editHeight, TRUE);
 
-				// Resize the edit box that is used for filtering
+				// Resize the list window
 				HWND listWindow =
 				    globalState.window[winjumpwindow_list_window_entries];
-
 				DqnV2 listP = dqn_v2(editP.x, (editP.y + editHeight + margin));
-				i32 listWidth = clientWidth - (2 * margin);
-				i32 listHeight =
-				    clientHeight - (i32)editP.y - editHeight - margin;
+				i32 listWidth  = editWidth;
+				i32 listHeight = clientHeight - (i32)listP.y - statusBarHeight;
 
 				MoveWindow(listWindow, (i32)listP.x, (i32)listP.y, listWidth,
 				           listHeight, TRUE);
 			}
 
+			////////////////////////////////////////////////////////////////////
+			// Re-configure Status Bar on Resize
+			////////////////////////////////////////////////////////////////////
+			{
+				HWND status = globalState.window[winjumpwindow_status_bar];
+				// Pass through message so windows can handle anchoring the bar
+				SendMessage(status, WM_SIZE, wParam, lParam);
+
+				// Setup the parts of the status bar
+				const WPARAM numParts  = 3;
+				i32 partsPos[numParts] = {};
+
+				i32 partsInterval = statusBarWidth / numParts;
+				for (i32 i = 0; i < numParts; i++)
+					partsPos[i] = partsInterval * (i + 1);
+				SendMessageW(status, SB_SETPARTS, numParts, (LPARAM)partsPos);
+			}
 			result = DefWindowProcW(window, msg, wParam, lParam);
 		}
 		break;
@@ -531,12 +581,14 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 	return result;
 }
 
-void winjump_update(WinjumpState *state)
+void winjump_update()
 {
 	Win32ProgramArray *programArray = &globalState.programArray;
 	HWND listBox = globalState.window[winjumpwindow_list_window_entries];
 
+	////////////////////////////////////////////////////////////////////////////
 	// Insert new programs into the list box and remove dead ones
+	////////////////////////////////////////////////////////////////////////////
 	{
 		// TODO(doyle): Separate ui update from internal state update
 		Win32ProgramArray emptyArray = {};
@@ -622,7 +674,9 @@ void winjump_update(WinjumpState *state)
 	// something so we can just keep the old list if nothing has
 	// changed or, only change the ones that have changed.
 
-	// Get Line from Edit Control and filter list results
+	////////////////////////////////////////////////////////////////////////////
+	// Update List if there's any search filtering
+	////////////////////////////////////////////////////////////////////////////
 	{
 		HWND editBox = globalState.window[winjumpwindow_input_search_entries];
 
@@ -670,6 +724,7 @@ void winjump_update(WinjumpState *state)
 			}
 		}
 	}
+
 }
 
 FILE_SCOPE void winjump_unit_test_local_functions()
@@ -744,19 +799,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	AdjustWindowRect(&r, windowStyle, FALSE);
 
 	globalRunning           = true;
-	WinjumpState state      = {};
-	state.defaultWindowProc = win32_main_callback;
-
-	HWND mainWindow = CreateWindowExW(
-	    WS_EX_COMPOSITED, wc.lpszClassName, L"Winjump", windowStyle,
+	HWND mainWindow         = CreateWindowExW(
+	    WS_EX_COMPOSITED, wc.lpszClassName,
+	    L"Winjump | Press Alt-K to activate Winjump", windowStyle,
 	    CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL,
-	    NULL, hInstance, &state);
+	    NULL, hInstance, NULL);
 
 	if (!mainWindow)
 	{
 		DQN_WIN32_ERROR_BOX("CreateWindowExW() failed.", NULL);
 		return -1;
 	}
+
+	globalState.defaultWindowProc                 = win32_main_callback;
 	globalState.window[winjumpwindow_main_client] = mainWindow;
 
 #define GUID_HOTKEY_ACTIVATE_APP 10983
@@ -767,20 +822,51 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	f32 targetMsPerFrame            = targetSecondsPerFrame * 1000.0f;
 	f32 frameTimeInS                = 0.0f;
 
-	MSG msg;
-
 	while (globalRunning)
 	{
 		f64 startFrameTime = dqn_time_now_in_ms();
 
+		MSG msg;
 		while (PeekMessageW(&msg, mainWindow, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 		}
 
-		winjump_update(&state);
+		winjump_update();
+		////////////////////////////////////////////////////////////////////////
+		// Update Status Bar
+		////////////////////////////////////////////////////////////////////////
+		HWND status = globalState.window[winjumpwindow_status_bar];
+		{
+			// Active Windows text in Status Bar
+			{
+				WPARAM partToDisplayAt = 2;
+				char text[32]          = {};
+				stbsp_sprintf(text, "Active Windows: %d",
+				              globalState.programArray.index);
+				SendMessage(status, SB_SETTEXT, partToDisplayAt, (LPARAM)text);
+			}
 
+			// Mem usage text in Status Bar
+			{
+				PROCESS_MEMORY_COUNTERS memCounter = {};
+				if (GetProcessMemoryInfo(GetCurrentProcess(), &memCounter,
+				                         sizeof(memCounter)))
+				{
+					WPARAM partToDisplayAt = 1;
+					char text[32]          = {};
+					stbsp_sprintf(text, "Memory: %'dkb",
+					              (u32)(memCounter.WorkingSetSize / 1024.0f));
+					SendMessage(status, SB_SETTEXT, partToDisplayAt,
+					            (LPARAM)text);
+				}
+			}
+		}
+
+		////////////////////////////////////////////////////////////////////////
+		// Frame Limiting
+		////////////////////////////////////////////////////////////////////////
 		f64 endWorkTime  = dqn_time_now_in_ms();
 		f64 workTimeInMs = endWorkTime - startFrameTime;
 
@@ -793,11 +879,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		f64 endFrameTime  = dqn_time_now_in_ms();
 		f64 frameTimeInMs = endFrameTime - startFrameTime;
 
-		wchar_t windowTitleBuffer[128] = {};
-		_snwprintf_s(windowTitleBuffer, DQN_ARRAY_COUNT(windowTitleBuffer),
-		             DQN_ARRAY_COUNT(windowTitleBuffer), L"Winjump | %5.2f ms/f",
-		             frameTimeInMs);
-		SetWindowTextW(mainWindow, windowTitleBuffer);
+		// Ms Per Frame text in Status Bar
+		{
+			WPARAM partToDisplayAt = 0;
+			char text[32]          = {};
+			stbsp_sprintf(text, "MsPerFrame: %.2f", (f32)frameTimeInMs);
+			SendMessage(status, SB_SETTEXT, partToDisplayAt, (LPARAM)text);
+		}
 	}
 
 	return 0;

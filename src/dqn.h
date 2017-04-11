@@ -266,6 +266,12 @@ DQN_FILE_SCOPE u32 dqn_ucs_to_utf8(u32 *dest, u32 character);
 DQN_FILE_SCOPE u32 dqn_utf8_to_ucs(u32 *dest, u32 character);
 
 ////////////////////////////////////////////////////////////////////////////////
+// Win32 Specific
+////////////////////////////////////////////////////////////////////////////////
+DQN_FILE_SCOPE bool dqn_win32_utf8_to_wchar(char *in, wchar_t *out, i32 outLen);
+DQN_FILE_SCOPE bool dqn_win32_wchar_to_utf8(wchar_t *in, char *out, i32 outLen);
+
+////////////////////////////////////////////////////////////////////////////////
 // File Operations
 ////////////////////////////////////////////////////////////////////////////////
 typedef struct DqnFile
@@ -1280,8 +1286,7 @@ DQN_FILE_SCOPE u32 dqn_utf8_to_ucs(u32 *dest, u32 character)
 #ifdef DQN_WIN32
 	#define DQN_WIN32_ERROR_BOX(text, title) MessageBoxA(NULL, text, title, MB_OK);
 
-FILE_SCOPE bool dqn_win32_utf8_to_wchar_internal(char *in, wchar_t *out,
-                                                  i32 outLen)
+DQN_FILE_SCOPE bool dqn_win32_utf8_to_wchar(char *in, wchar_t *out, i32 outLen)
 {
 	u32 result = MultiByteToWideChar(CP_UTF8, 0, in, -1, out, outLen-1);
 
@@ -1294,8 +1299,7 @@ FILE_SCOPE bool dqn_win32_utf8_to_wchar_internal(char *in, wchar_t *out,
 	return true;
 }
 
-FILE_SCOPE bool dqn_win32_wchar_to_utf8_internal(wchar_t *in, char *out,
-                                                  i32 outLen)
+DQN_FILE_SCOPE bool dqn_win32_wchar_to_utf8(wchar_t *in, char *out, i32 outLen)
 {
 	u32 result =
 	    WideCharToMultiByte(CP_UTF8, 0, in, -1, out, outLen, NULL, NULL);
@@ -1316,8 +1320,7 @@ DQN_FILE_SCOPE bool dqn_file_open(char *const path, DqnFile *file)
 
 #ifdef DQN_WIN32
 	wchar_t widePath[MAX_PATH] = {};
-	dqn_win32_utf8_to_wchar_internal(path, widePath,
-	                                  DQN_ARRAY_COUNT(widePath));
+	dqn_win32_utf8_to_wchar(path, widePath, DQN_ARRAY_COUNT(widePath));
 
 	HANDLE handle = CreateFileW(widePath, GENERIC_READ | GENERIC_WRITE, 0, NULL,
 	                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -1389,7 +1392,7 @@ DQN_FILE_SCOPE char **dqn_dir_read(char *dir, u32 *numFiles)
 
 	u32 currNumFiles = 0;
 	wchar_t wideDir[MAX_PATH] = {};
-	dqn_win32_utf8_to_wchar_internal(dir, wideDir, DQN_ARRAY_COUNT(wideDir));
+	dqn_win32_utf8_to_wchar(dir, wideDir, DQN_ARRAY_COUNT(wideDir));
 
 	// Enumerate number of files first
 	{
@@ -1444,8 +1447,8 @@ DQN_FILE_SCOPE char **dqn_dir_read(char *dir, u32 *numFiles)
 		WIN32_FIND_DATAW findData = {};
 		while (FindNextFileW(findHandle, &findData) != 0)
 		{
-			dqn_win32_wchar_to_utf8_internal(
-			    findData.cFileName, list[listIndex++], MAX_PATH);
+			dqn_win32_wchar_to_utf8(findData.cFileName, list[listIndex++],
+			                        MAX_PATH);
 		}
 
 		*numFiles = currNumFiles;

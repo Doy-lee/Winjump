@@ -41,7 +41,7 @@ REM Include directories
 set includeFlags=
 
 REM Link libraries
-set linkLibraries=user32.lib gdi32.lib shlwapi.lib
+set linkLibraries=user32.lib gdi32.lib shlwapi.lib Comctl32.lib
 
 REM incrmenetal:no, turn incremental builds off
 REM opt:ref, try to remove functions from libs that are referenced at all
