@@ -26,12 +26,21 @@
 // mechanisms
 // TODO(doyle): Clean up this cesspool.
 
+// Returns length without null terminator, returns 0 if NULL
 FILE_SCOPE i32 wstrlen(const wchar_t *a)
 {
 	i32 result = 0;
 	while (a && a[result]) result++;
 	return result;
 }
+
+FILE_SCOPE i32 wstrlen_delimit_with(const wchar_t *a, const wchar_t delimiter)
+{
+	i32 result = 0;
+	while (a && a[result] && a[result] != delimiter) result++;
+	return result;
+}
+
 
 FILE_SCOPE inline i32 wstrcmp(const wchar_t *a, const wchar_t *b)
 {
@@ -49,7 +58,6 @@ FILE_SCOPE inline i32 wstrcmp(const wchar_t *a, const wchar_t *b)
 	return (((*a) < (*b)) ? -1 : 1);
 }
 
-
 FILE_SCOPE inline wchar_t wchar_to_lower(const wchar_t a)
 {
 	if (a >= L'A' && a <= L'Z')
@@ -61,7 +69,72 @@ FILE_SCOPE inline wchar_t wchar_to_lower(const wchar_t a)
 	return a;
 }
 
+FILE_SCOPE inline bool wchar_has_substring(wchar_t *a, i32 lenA,
+                                           wchar_t *b, i32 lenB)
+{
+	if (!a || !b) return false;
+	if (lenA == 0 || lenB == 0) return false;
 
+	wchar_t *longStr, *shortStr;
+	i32 longLen, shortLen;
+	if (lenA > lenB)
+	{
+		longStr  = a;
+		longLen  = lenA;
+
+		shortStr = b;
+		shortLen = lenB;
+	}
+	else
+	{
+		longStr  = b;
+		longLen  = lenB;
+
+		shortStr = a;
+		shortLen = lenA;
+	}
+
+	bool matchedSubstr = false;
+	for (i32 indexIntoLong = 0; indexIntoLong < longLen && !matchedSubstr;
+	     indexIntoLong++)
+	{
+		// NOTE: As we scan through, if the longer string we index into becomes
+		// shorter than the substring we're checking then the substring is not
+		// contained in the long string.
+		i32 remainingLenInLongStr = longLen - indexIntoLong;
+		if (remainingLenInLongStr < shortLen) break;
+
+		wchar_t *longSubstr = &longStr[indexIntoLong];
+		i32 index = 0;
+		for (;;)
+		{
+			if (wchar_to_lower(longSubstr[index]) ==
+			    wchar_to_lower(shortStr[index]))
+			{
+				index++;
+				if (index >= shortLen || !shortStr[index])
+				{
+					matchedSubstr = true;
+					break;
+				}
+			}
+			else
+			{
+				break;
+			}
+		}
+	}
+
+	return matchedSubstr;
+}
+
+FILE_SCOPE inline void wchar_str_to_lower(wchar_t *a, i32 len)
+{
+	for (i32 i = 0; i < len; i++)
+		a[i]   = wchar_to_lower(a[i]);
+}
+
+#define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 FILE_SCOPE bool globalRunning;
 
 typedef struct Win32Program
@@ -110,7 +183,6 @@ enum Win32Resources
 };
 
 #define OFFSET_TO_STATE_PTR 0
-#define MAX_PROGRAM_TITLE_LEN DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 
 FILE_SCOPE void winjump_display_window(HWND window)
 {
@@ -152,7 +224,7 @@ BOOL CALLBACK win32_enum_procs_callback(HWND window, LPARAM lParam)
 	{
 		Win32Program program = {};
 		i32 titleLen =
-		    GetWindowTextW(window, program.title, MAX_PROGRAM_TITLE_LEN);
+		    GetWindowTextW(window, program.title, WIN32_MAX_PROGRAM_TITLE);
 		program.titleLen = titleLen;
 
 		// If we receive an empty string as a window title, then we want to
@@ -488,28 +560,202 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 	return result;
 }
 
+void winjump_update(WinjumpState *state)
+{
+	Win32ProgramArray *programArray = &state->programArray;
+	HWND listBox = state->window[winjumpwindows_list_window_entries];
+
+	// Insert new programs into the list box and remove dead ones
+	{
+		// TODO(doyle): Separate ui update from internal state update
+		Win32ProgramArray emptyArray = {};
+		*programArray                = emptyArray;
+		DQN_ASSERT(programArray->index == 0);
+		EnumWindows(win32_enum_procs_callback, (LPARAM)programArray);
+
+		const LRESULT listFirstVisibleIndex =
+		    SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
+
+		// Check displayed list entries against our new enumerated programs list
+		const LRESULT listSize = SendMessageW(listBox, LB_GETCOUNT, 0, 0);
+		for (LRESULT index = 0;
+		     (index < listSize) && (index < programArray->index); index++)
+		{
+			Win32Program *currProgram = &programArray->item[index];
+
+			// TODO(doyle): Tighten memory alloc using len vars in program
+			// TODO(doyle): snprintf?
+
+			// IMPORTANT: We set item data for the entry, so the entry
+			// must exist before we check PID. We create this entry when
+			// we check the string to see if it exists as the index.
+			// NOTE: +4 for the " - " and the null terminator
+			const i32 len = DQN_ARRAY_COUNT(currProgram->title) +
+			                DQN_ARRAY_COUNT(currProgram->exe) + 4;
+			wchar_t friendlyName[len] = {};
+			winjump_get_program_friendly_name(currProgram, friendlyName, len);
+
+			wchar_t entry[len] = {};
+			LRESULT entryLen =
+			    SendMessageW(listBox, LB_GETTEXT, index, (LPARAM)entry);
+			if (wstrcmp(friendlyName, entry) != 0)
+			{
+				LRESULT insertIndex = SendMessageW(listBox, LB_INSERTSTRING,
+				                                   index, (LPARAM)friendlyName);
+
+				LRESULT itemCount =
+				    SendMessageW(listBox, LB_DELETESTRING, index + 1, 0);
+			}
+
+			// Compare list entry item data, pid
+			LRESULT entryPid =
+			    SendMessageW(listBox, LB_GETITEMDATA, index, 0);
+			if (currProgram->pid != (DWORD)entryPid)
+			{
+				LRESULT result = SendMessageW(listBox, LB_SETITEMDATA, index,
+				                              currProgram->pid);
+			}
+		}
+
+		// Fill the remainder of the list
+		if (listSize < programArray->index)
+		{
+			for (i32 i = listSize; i < programArray->index; i++)
+			{
+				Win32Program *program = &programArray->item[i];
+				const i32 len         = DQN_ARRAY_COUNT(program->title) +
+				                DQN_ARRAY_COUNT(program->exe) + 4;
+				wchar_t friendlyName[len] = {};
+				winjump_get_program_friendly_name(program, friendlyName, len);
+
+				LRESULT insertIndex = SendMessageW(listBox, LB_ADDSTRING, 0,
+				                                   (LPARAM)friendlyName);
+				LRESULT result = SendMessageW(listBox, LB_SETITEMDATA,
+				                              insertIndex, program->pid);
+			}
+		}
+		else
+		{
+			for (i32 i = programArray->index; i < listSize; i++)
+			{
+				LRESULT result = SendMessageW(listBox, LB_DELETESTRING, i, 0);
+			}
+		}
+
+		SendMessageW(listBox, LB_SETTOPINDEX, listFirstVisibleIndex, 0);
+	}
+
+	// TODO(doyle): Currently filtering will refilter the list every
+	// time, causing reflashing on the screen as the control updates
+	// multiple times per second. We should have a "changed" flag or
+	// something so we can just keep the old list if nothing has
+	// changed or, only change the ones that have changed.
+
+	// Get Line from Edit Control and filter list results
+	{
+		HWND editBox = state->window[winjumpwindows_input_search_entries];
+
+		// NOTE: Set first char is size of buffer as required by win32
+		wchar_t searchString[WIN32_MAX_PROGRAM_TITLE] = {};
+		searchString[0] = DQN_ARRAY_COUNT(searchString);
+
+		LRESULT searchStringLen =
+		    SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)searchString);
+		wchar_str_to_lower(searchString, searchStringLen);
+		if (searchStringLen > 0)
+		{
+			state->currentlyFiltering = true;
+			DQN_ASSERT(searchStringLen < WIN32_MAX_PROGRAM_TITLE);
+
+			for (i32 i = 0; i < programArray->index; i++)
+			{
+				Win32Program *program = &programArray->item[i];
+				const i32 friendlyNameLen = DQN_ARRAY_COUNT(program->title) +
+				                            DQN_ARRAY_COUNT(program->exe) + 4;
+				wchar_t friendlyName[friendlyNameLen] = {};
+				winjump_get_program_friendly_name(program, friendlyName,
+				                                  friendlyNameLen);
+
+				wchar_t *searchPtr = searchString;
+				if (!wchar_has_substring(searchString, searchStringLen,
+				                         friendlyName, friendlyNameLen))
+				{
+					// If search string doesn't match, delete it from display
+					LRESULT result =
+					    SendMessageW(listBox, LB_DELETESTRING, i, 0);
+					for (i32 j = i; j + 1 < programArray->index; j++)
+						programArray->item[j] = programArray->item[j + 1];
+
+					// Update indexes so we continue iterating over the correct
+					// elements after removing it from the list
+					i--;
+					programArray->index--;
+					if (programArray->index >= 0)
+					{
+						Win32Program emptyProgram               = {};
+						programArray->item[programArray->index] = emptyProgram;
+					}
+				}
+			}
+		}
+	}
+}
+
+FILE_SCOPE void winjump_unit_test_local_functions()
+{
+	DQN_ASSERT(wchar_to_lower(L'A') == L'a');
+	DQN_ASSERT(wchar_to_lower(L'a') == L'a');
+	DQN_ASSERT(wchar_to_lower(L' ') == L' ');
+
+	{
+		wchar_t *a = L"Microsoft";
+		wchar_t *b = L"icro";
+		i32 lenA   = wstrlen(a);
+		i32 lenB   = wstrlen(b);
+		DQN_ASSERT(wchar_has_substring(a, lenA, b, lenB) == true);
+		DQN_ASSERT(wchar_has_substring(a, lenA, L"iro", wstrlen(L"iro")) ==
+		           false);
+		DQN_ASSERT(wchar_has_substring(b, lenB, a, lenA) == true);
+		DQN_ASSERT(wchar_has_substring(L"iro", wstrlen(L"iro"), a, lenA) ==
+		           false);
+		DQN_ASSERT(wchar_has_substring(L"", 0, L"iro", 4) == false);
+		DQN_ASSERT(wchar_has_substring(L"", 0, L"", 0) == false);
+		DQN_ASSERT(wchar_has_substring(NULL, 0, NULL, 0) == false);
+	}
+
+	{
+		wchar_t *a = L"Micro";
+		wchar_t *b = L"irob";
+		i32 lenA   = wstrlen(a);
+		i32 lenB   = wstrlen(b);
+		DQN_ASSERT(wchar_has_substring(a, lenA, b, lenB) == false);
+		DQN_ASSERT(wchar_has_substring(b, lenB, a, lenA) == false);
+	}
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd)
 {
+	winjump_unit_test_local_functions();
 	i32 bytesToReserveAfterWindowInst = sizeof(WinjumpState *);
 
-	WNDCLASSEXW wc =
-	{
-		sizeof(WNDCLASSEX),
-		CS_HREDRAW | CS_VREDRAW,
-		win32_main_callback,
-		0, // int cbClsExtra
-		bytesToReserveAfterWindowInst, // int cbWndExtra
-		hInstance,
-		LoadIcon(NULL, IDI_APPLICATION),
-		LoadCursor(NULL, IDC_ARROW),
-		GetSysColorBrush(COLOR_3DFACE),
-		L"", // LPCTSTR lpszMenuName
-		L"WinjumpWindowClass",
-		NULL, // HICON hIconSm
+	WNDCLASSEXW wc = {
+	    sizeof(WNDCLASSEX),
+	    CS_HREDRAW | CS_VREDRAW,
+	    win32_main_callback,
+	    0,                             // int cbClsExtra
+	    bytesToReserveAfterWindowInst, // int cbWndExtra
+	    hInstance,
+	    LoadIcon(NULL, IDI_APPLICATION),
+	    LoadCursor(NULL, IDC_ARROW),
+	    GetSysColorBrush(COLOR_3DFACE),
+	    L"", // LPCTSTR lpszMenuName
+	    L"WinjumpWindowClass",
+	    NULL, // HICON hIconSm
 	};
 
-	if (!RegisterClassExW(&wc)) {
+	if (!RegisterClassExW(&wc))
+	{
 		// TODO(doyle): Logging, couldn't register class
 		DQN_WIN32_ERROR_BOX("RegisterClassExW() failed.", NULL);
 		return -1;
@@ -547,14 +793,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 #define GUID_HOTKEY_ACTIVATE_APP 10983
 	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
 
-	const f32 targetFramesPerSecond = 16.0f;
+	const f32 targetFramesPerSecond = 8.0f;
 	f32 targetSecondsPerFrame       = 1 / targetFramesPerSecond;
 	f32 targetMsPerFrame            = targetSecondsPerFrame * 1000.0f;
 	f32 frameTimeInS                = 0.0f;
-
-	DQN_ASSERT(wchar_to_lower(L'A') == L'a');
-	DQN_ASSERT(wchar_to_lower(L'a') == L'a');
-	DQN_ASSERT(wchar_to_lower(L' ') == L' ');
 
 	MSG msg;
 
@@ -562,199 +804,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	{
 		f64 startFrameTime = dqn_time_now_in_ms();
 
-		Win32ProgramArray *programArray = &state.programArray;
-		HWND listBox = state.window[winjumpwindows_list_window_entries];
-
-		// Insert new programs into the list box and remove dead ones
-		{
-			// TODO(doyle): Separate ui update from internal state update
-			Win32ProgramArray emptyArray = {};
-			*programArray                = emptyArray;
-			DQN_ASSERT(programArray->index == 0);
-			EnumWindows(win32_enum_procs_callback, (LPARAM)programArray);
-
-			const LRESULT listFirstVisibleIndex =
-			    SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
-
-			const LRESULT listSize = SendMessageW(listBox, LB_GETCOUNT, 0, 0);
-
-			for (LRESULT itemIndex = 0;
-			     (itemIndex < listSize) && (itemIndex < programArray->index);
-			     itemIndex++)
-			{
-				Win32Program *currProgram = &programArray->item[itemIndex];
-
-				// IMPORTANT: We set item data for the entry, so the entry
-				// must exist before we check PID. We create this entry when
-				// we check the string to see if it exists as the index.
-				// Compare program title strings
-
-				// TODO(doyle): Tighten memory alloc using len vars in program
-				// TODO(doyle): snprintf?
-
-				// NOTE: +4 for the " - " and the null terminator
-				const i32 len = DQN_ARRAY_COUNT(currProgram->title) +
-				                DQN_ARRAY_COUNT(currProgram->exe) + 4;
-				wchar_t friendlyName[len] = {};
-				winjump_get_program_friendly_name(currProgram, friendlyName,
-				                                  len);
-
-				wchar_t entryString[len] = {};
-				LRESULT entryStringLen   = SendMessageW(
-				    listBox, LB_GETTEXT, itemIndex, (LPARAM)entryString);
-				if (wstrcmp(friendlyName, entryString) != 0)
-				{
-					LRESULT insertIndex =
-					    SendMessageW(listBox, LB_INSERTSTRING, itemIndex,
-					                (LPARAM)friendlyName);
-
-					LRESULT itemCount =
-					    SendMessageW(listBox, LB_DELETESTRING, itemIndex + 1, 0);
-				}
-
-				// Compare list entry item data, pid
-				LRESULT listEntryPid =
-				    SendMessageW(listBox, LB_GETITEMDATA, itemIndex, 0);
-				if (currProgram->pid != (DWORD)listEntryPid)
-				{
-					LRESULT result = SendMessageW(listBox, LB_SETITEMDATA,
-					                             itemIndex, currProgram->pid);
-				}
-			}
-
-			if (listSize < programArray->index)
-			{
-				for (i32 i = listSize; i < programArray->index; i++)
-				{
-					Win32Program *program = &programArray->item[i];
-					const i32 len = DQN_ARRAY_COUNT(program->title) +
-					                DQN_ARRAY_COUNT(program->exe) + 4;
-					wchar_t friendlyName[len] = {};
-					winjump_get_program_friendly_name(program, friendlyName, len);
-
-					LRESULT insertIndex = SendMessageW(listBox, LB_ADDSTRING, 0,
-					                                  (LPARAM)friendlyName);
-					LRESULT result = SendMessageW(listBox, LB_SETITEMDATA,
-					                             insertIndex, program->pid);
-				}
-			}
-			else
-			{
-				for (i32 i = programArray->index; i < listSize; i++)
-				{
-					LRESULT result =
-					    SendMessageW(listBox, LB_DELETESTRING, i, 0);
-				}
-			}
-
-			SendMessageW(listBox, LB_SETTOPINDEX, listFirstVisibleIndex, 0);
-		}
-
-		// TODO(doyle): Currently filtering will refilter the list every
-		// time, causing reflashing on the screen as the control updates
-		// multiple times per second. We should have a "changed" flag or
-		// something so we can just keep the old list if nothing has
-		// changed or, only change the ones that have changed.
-
-		// Get Line from Edit Control and filter list results
-		{
-			HWND editBox = state.window[winjumpwindows_input_search_entries];
-			// NOTE: Set first char is size of buffer as required by win32
-			wchar_t editBoxText[MAX_PROGRAM_TITLE_LEN] = {};
-			editBoxText[0]                            = MAX_PROGRAM_TITLE_LEN;
-
-			LRESULT numCharsCopied =
-			    SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)editBoxText);
-			if (numCharsCopied > 0)
-			{
-				state.currentlyFiltering = true;
-				DQN_ASSERT(numCharsCopied < MAX_PROGRAM_TITLE_LEN);
-
-				for (i32 i = 0; i < programArray->index; i++)
-				{
-					Win32Program *program = &programArray->item[i];
-					const i32 len         = DQN_ARRAY_COUNT(program->title) +
-					                        DQN_ARRAY_COUNT(program->exe) + 4;
-					wchar_t friendlyName[len] = {};
-					winjump_get_program_friendly_name(program, friendlyName,
-					                                  len);
-
-					// TODO(doyle): Hardcoded arbitrary limit
-					wchar_t *titleWords[32]       = {};
-					i32 titleWordsIndex           = 0;
-					titleWords[titleWordsIndex++] = program->title;
-
-					// TODO(doyle): Be smart, split by more than just
-					// spaces, like file directories
-					for (i32 j = 1; j + 1 < len; j++)
-					{
-						wchar_t *checkSpace    = &friendlyName[j];
-						wchar_t *oneAfterSpace = &friendlyName[j + 1];
-						if (*checkSpace == L' ' && *oneAfterSpace != L' ')
-						{
-							// NOTE: Beginning of new word
-							titleWords[titleWordsIndex++] = oneAfterSpace;
-						}
-					}
-
-					bool textMatches = true;
-					for (i32 j = 0; j < titleWordsIndex; j++)
-					{
-						textMatches        = true;
-						wchar_t *editChar  = editBoxText;
-						wchar_t *titleChar = titleWords[j];
-
-						// TODO(doyle): Right now words are split by
-						// spaces
-						// and we semantically separate them by giving
-						// out
-						// ptrs to each word (from the same word
-						// allocation), delimiting it by spaces
-						for (; *editChar && *titleChar && *titleChar != ' ';
-						     editChar++, titleChar++)
-						{
-							wchar_t editCharLowercase =
-							    wchar_to_lower(*editChar);
-							wchar_t titleCharLowercase =
-							    wchar_to_lower(*titleChar);
-							if (editCharLowercase != titleCharLowercase)
-							{
-								textMatches = false;
-								break;
-							}
-						}
-
-						if (textMatches) break;
-					}
-
-					if (!textMatches)
-					{
-						LRESULT result =
-						    SendMessageW(listBox, LB_DELETESTRING, i, 0);
-
-						for (i32 j = i; j + 1 < programArray->index; j++)
-						{
-							programArray->item[j] = programArray->item[j + 1];
-						}
-
-						i--;
-						programArray->index--;
-						if (programArray->index >= 0)
-						{
-							Win32Program emptyProgram = {};
-							programArray->item[programArray->index] =
-							    emptyProgram;
-						}
-					}
-				}
-			}
-		}
-
 		while (PeekMessageW(&msg, mainWindow, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 		}
+
+		winjump_update(&state);
 
 		f64 endWorkTime  = dqn_time_now_in_ms();
 		f64 workTimeInMs = endWorkTime - startFrameTime;

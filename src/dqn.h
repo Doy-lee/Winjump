@@ -72,6 +72,23 @@ typedef float  f32;
 	dqn_darray_free(uintArray);
  */
 
+// Typical operations should not require using the header directly, and it's
+// recommended to use the API, but it can be used to have a faster way to track
+// metadata.
+typedef struct DqnDArrayHeader
+{
+	u32  index;
+	u32  itemSize;
+	u32  capacity;
+	u32  signature;
+
+	void *data;
+} DqnDArrayHeader;
+
+// Returns the DArray header IF is a valid DArray
+// Returns NULL              IF not a valid DArray
+DQN_FILE_SCOPE DqnDArrayHeader *dqn_darray_get_header(void *array);
+
 // The init macro RETURNS a pointer to your type, you can index this as normal
 // with array notation [].
 // u32 type             - The data type to initiate a dynamic array with
@@ -81,14 +98,32 @@ typedef float  f32;
 
 // Pass in the pointer returned by DQN_DARRAY_INIT. If the pointer is not
 // a valid DArray pointer, this will return 0.
-DQN_FILE_SCOPE u32 dqn_darray_get_capacity(void *array);
-DQN_FILE_SCOPE u32 dqn_darray_get_num_items(void *array);
+DQN_FILE_SCOPE u32  dqn_darray_get_capacity(void *array);
+DQN_FILE_SCOPE u32  dqn_darray_get_num_items(void *array);
 
+// Returns true and array modified in-place IF
+//   - The capacity change was successful OR
+//   - The newCapacity is equal to current capacity (no changes).
+// Returns false and array is unmodified IF
+//   - Invalid DArray passed in OR realloc failed OR
+//   - More items in array than new capacity
+DQN_FILE_SCOPE bool dqn_darray_capacity_change(void **array, i32 newCapacity);
+
+// WARNING: This macro currently asserts if it's unable to push elements
 // void **array - the address of the pointer returned by DQN_DARRAY_INIT
-// void *item   - a pointer to the object to insert
-// The push macro RETURNS true/false if the push was successful or not.
-#define DQN_DARRAY_PUSH(array, item)                                          \
-	dqn_darray_push_internal((void **)array, (void *)item, sizeof(*item))
+// void item    - the object to insert
+#define DQN_DARRAY_PUSH(array, item)                                           \
+	{                                                                          \
+		if (dqn_darray_capacity_grow_if_need_internal((void **)array))         \
+		{                                                                      \
+			DqnDArrayHeader *header = dqn_darray_get_header(*array);           \
+			*array[header->index++] = item;                                    \
+		}                                                                      \
+		else                                                                   \
+		{                                                                      \
+			DQN_ASSERT(INVALID_CODE_PATH);                                     \
+		}                                                                      \
+	}
 
 // Pass in the pointer returned by DQN_DARRAY_INIT. Returns if the free was
 // successful. This will return false if the array is not a valid DArray and
@@ -165,7 +200,7 @@ typedef union DqnV4
 } DqnV4;
 
 // Create a vector using ints and typecast to floats
-DQN_FILE_SCOPE DqnV4 dqn_v4i(i32 x, i32 y, i32 z);
+DQN_FILE_SCOPE DqnV4 dqn_v4i(i32 x, i32 y, i32 z, f32 w);
 DQN_FILE_SCOPE DqnV4 dqn_v4 (f32 x, f32 y, f32 z, f32 w);
 
 DQN_FILE_SCOPE DqnV4 dqn_v4_add     (DqnV4 a, DqnV4 b);
@@ -301,27 +336,17 @@ DQN_FILE_SCOPE i32  dqn_rnd_pcg_range(DqnRandPCGState *pcg, i32 min, i32 max);
 // DArray - Dynamic Array
 ////////////////////////////////////////////////////////////////////////////////
 #define DQN_DARRAY_SIGNATURE_INTERNAL 0xAC83DB81
-typedef struct DqnDArrayInternal
-{
-	u32  index;
-	u32  itemSize;
-	u32  capacity;
-	u32  signature;
-
-	void *data;
-} DqnDArrayInternal;
-
 FILE_SCOPE void *dqn_darray_init_internal(u32 itemSize, u32 startingCapacity)
 {
 	if (startingCapacity <= 0 || itemSize == 0) return NULL;
 
-	u32 metadataSize = sizeof(DqnDArrayInternal);
+	u32 metadataSize = sizeof(DqnDArrayHeader);
 	u32 storageSize  = itemSize * startingCapacity;
 
 	void *memory = calloc(1, metadataSize + storageSize);
 	if (!memory) return NULL;
 
-	DqnDArrayInternal *array = (DqnDArrayInternal *)memory;
+	DqnDArrayHeader *array = (DqnDArrayHeader *)memory;
 	array->signature  = DQN_DARRAY_SIGNATURE_INTERNAL;
 	array->itemSize   = itemSize;
 	array->capacity   = startingCapacity;
@@ -330,36 +355,65 @@ FILE_SCOPE void *dqn_darray_init_internal(u32 itemSize, u32 startingCapacity)
 	return array->data;
 }
 
-FILE_SCOPE DqnDArrayInternal *dqn_darray_get_header_internal(void *array)
+DQN_FILE_SCOPE DqnDArrayHeader *dqn_darray_get_header(void *array)
 {
 	if (!array) return NULL;
 
-	DqnDArrayInternal *result = (DqnDArrayInternal *)((u8 *)array - sizeof(DqnDArrayInternal));
-	if (result->signature != DQN_DARRAY_SIGNATURE_INTERNAL) return 0;
+	DqnDArrayHeader *result = (DqnDArrayHeader *)((u8 *)array - sizeof(DqnDArrayHeader));
+	if (result->signature != DQN_DARRAY_SIGNATURE_INTERNAL) return NULL;
 
 	return result;
 }
 
 DQN_FILE_SCOPE u32 dqn_darray_get_capacity(void *array)
 {
-	DqnDArrayInternal *header = dqn_darray_get_header_internal(array);
+	DqnDArrayHeader *header = dqn_darray_get_header(array);
 	if (!header) return 0;
 	return header->capacity;
 }
 
 DQN_FILE_SCOPE u32 dqn_darray_get_num_items(void *array)
 {
-	DqnDArrayInternal *header = dqn_darray_get_header_internal(array);
+	DqnDArrayHeader *header = dqn_darray_get_header(array);
 	if (!header) return 0;
 	return header->index;
 }
 
-bool dqn_darray_push_internal(void **array, void *element, u32 itemSize)
+DQN_FILE_SCOPE bool dqn_darray_capacity_change(void **array, u32 newCapacity)
 {
-	if (!element || !array) return false;
+	DqnDArrayHeader *header = dqn_darray_get_header(*array);
+	if (!header) return false;
+	if (header->capacity == newCapacity) return true;
 
-	DqnDArrayInternal *header = dqn_darray_get_header_internal(*array);
-	if (!header || header->itemSize != itemSize) return false;
+	if (newCapacity > header->index)
+	{
+		u32 metadataSize = sizeof(DqnDArrayHeader);
+		u32 storageSize  = header->itemSize * newCapacity;
+		void *newMem     = realloc(header, metadataSize + storageSize);
+		if (newMem)
+		{
+			header           = (DqnDArrayHeader *)newMem;
+			header->capacity = newCapacity;
+			header->data     = (u8 *)newMem + metadataSize;
+			*array           = header->data;
+
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+	else
+	{
+		return false;
+	}
+}
+
+FILE_SCOPE bool dqn_darray_capacity_grow_if_need_internal(void **array)
+{
+	DqnDArrayHeader *header = dqn_darray_get_header(*array);
+	if (!header) return false;
 
 	if (header->index >= header->capacity)
 	{
@@ -367,21 +421,23 @@ bool dqn_darray_push_internal(void **array, void *element, u32 itemSize)
 		u32 newCapacity         = (i32)(header->capacity * GROWTH_FACTOR);
 		if (newCapacity == header->capacity) newCapacity++;
 
-		u32 metadataSize = sizeof(DqnDArrayInternal);
-		u32 storageSize  = header->itemSize * newCapacity;
-		void *newMem     = realloc(header, metadataSize + storageSize);
-		if (newMem)
-		{
-			header           = (DqnDArrayInternal *)newMem;
-			header->capacity = newCapacity;
-			header->data     = (u8 *)newMem + metadataSize;
-			*array           = header->data;
-		}
-		else
-		{
-			return false;
-		}
+		return dqn_darray_capacity_change(array, newCapacity);
 	}
+
+	return true;
+}
+
+bool dqn_darray_push_internal(void **array, void *element, u32 itemSize)
+{
+	if (!element || !array) return false;
+
+	DqnDArrayHeader *header = dqn_darray_get_header(*array);
+	if (!header || header->itemSize != itemSize) return false;
+
+	// NOTE: Array is grown before this step happens. If at this point it still
+	// doesn't fit then we've had a mem alloc problem.
+	if (header->index >= header->capacity)
+		return false;
 
 	u32 arrayOffset = header->itemSize * header->index++;
 	DQN_ASSERT(header->index <= header->capacity);
@@ -396,7 +452,7 @@ bool dqn_darray_push_internal(void **array, void *element, u32 itemSize)
 
 DQN_FILE_SCOPE inline bool dqn_darray_free(void *array)
 {
-	DqnDArrayInternal *header = dqn_darray_get_header_internal(array);
+	DqnDArrayHeader *header = dqn_darray_get_header(array);
 	if (header)
 	{
 		header->index     = 0;
