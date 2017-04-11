@@ -17,9 +17,6 @@
 #include <stdio.h>
 
 // TODO(doyle): Organise all our globals siting around.
-// TODO(doyle): Platform layer separation
-// TODO(doyle): Store process EXE name so we can also search by that in the text
-// filtering
 // TODO(doyle): Search by index in list to help drilldown after the initial
 // search
 // TODO(doyle): Stop screen flickering by having better listbox updating
@@ -134,9 +131,6 @@ FILE_SCOPE inline void wchar_str_to_lower(wchar_t *a, i32 len)
 		a[i]   = wchar_to_lower(a[i]);
 }
 
-#define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
-FILE_SCOPE bool globalRunning;
-
 typedef struct Win32Program
 {
 	wchar_t title[256];
@@ -149,12 +143,13 @@ typedef struct Win32Program
 	DWORD   pid;
 } Win32Program;
 
+
 enum WinjumpWindows
 {
-	winjumpwindows_main_client,
-	winjumpwindows_list_window_entries,
-	winjumpwindows_input_search_entries,
-	winjumpwindows_count,
+	winjumpwindow_main_client,
+	winjumpwindow_list_window_entries,
+	winjumpwindow_input_search_entries,
+	winjumpwindow_count,
 };
 
 typedef struct Win32ProgramArray
@@ -163,36 +158,31 @@ typedef struct Win32ProgramArray
 	i32          index;
 } Win32ProgramArray;
 
-typedef struct WinjumpState
-{
-	HFONT defaultFont;
-	HWND  window[winjumpwindows_count];
-
-	WNDPROC defaultWindowProc;
-	WNDPROC defaultWindowProcEditBox;
-	Win32ProgramArray programArray;
-
-	// TODO(doyle): Use this flag to reduce the times the window reupdates
-	bool currentlyFiltering;
-} WinjumpState;
-
 enum Win32Resources
 {
 	win32resource_edit_text_buffer,
 	win32resource_list,
 };
 
-#define OFFSET_TO_STATE_PTR 0
-
-FILE_SCOPE void winjump_display_window(HWND window)
+typedef struct WinjumpState
 {
+	HFONT   defaultFont;
+	HWND    window[winjumpwindow_count];
+	WNDPROC defaultWindowProc;
+	WNDPROC defaultWindowProcEditBox;
 
+	Win32ProgramArray programArray;
+	bool currentlyFiltering;
+} WinjumpState;
+
+#define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
+FILE_SCOPE WinjumpState globalState;
+FILE_SCOPE bool         globalRunning;
+
+FILE_SCOPE void win32_display_window(HWND window)
+{
 	// IsIconic == if window is minimised
-	if (IsIconic(window))
-	{
-		ShowWindow(window, SW_RESTORE);
-	}
-
+	if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
 	SetForegroundWindow(window);
 }
 
@@ -294,9 +284,6 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
                                                          WPARAM wParam,
                                                          LPARAM lParam)
 {
-	WinjumpState *state =
-	    (WinjumpState *)GetWindowLongPtrW(editWindow, GWLP_USERDATA);
-
 	LRESULT result = 0;
 	switch (msg)
 	{
@@ -306,27 +293,28 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 		case WM_KEYUP:
 		{
 			u32 vkCode = wParam;
-			// bool keyWasDown = ((lParam & (1 << 30)) != 0);
-			// bool keyIsDown = ((lParam & (1 << 31)) == 0);
-
 			switch (vkCode)
 			{
 				case VK_RETURN:
 				{
-					if (state->programArray.index > 0)
+					if (globalState.programArray.index > 0)
 					{
 						Win32Program programToShow =
-						    state->programArray.item[0];
-						winjump_display_window(programToShow.window);
+						    globalState.programArray.item[0];
+						win32_display_window(programToShow.window);
+
 						SendMessageW(editWindow, WM_SETTEXT, 0, (LPARAM)L"");
+						ShowWindow(
+						    globalState.window[winjumpwindow_main_client],
+						    SW_MINIMIZE);
 					}
 				}
 				break;
 
 				default:
 				{
-					return CallWindowProcW(state->defaultWindowProcEditBox,
-					                      editWindow, msg, wParam, lParam);
+					return CallWindowProcW(globalState.defaultWindowProcEditBox,
+					                       editWindow, msg, wParam, lParam);
 				}
 			}
 		}
@@ -346,14 +334,14 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 				{
 					// If escape is pressed, empty the text
 					HWND inputBox =
-					    state->window[winjumpwindows_input_search_entries];
+					    globalState.window[winjumpwindow_input_search_entries];
 					SetWindowTextW(inputBox, L"");
 					return 0;
 				}
 
 				default:
 				{
-					return CallWindowProcW(state->defaultWindowProcEditBox,
+					return CallWindowProcW(globalState.defaultWindowProcEditBox,
 					                      editWindow, msg, wParam, lParam);
 				}
 			}
@@ -361,7 +349,7 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 
 		default:
 		{
-			return CallWindowProcW(state->defaultWindowProcEditBox, editWindow,
+			return CallWindowProcW(globalState.defaultWindowProcEditBox, editWindow,
 			                       msg, wParam, lParam);
 		}
 	}
@@ -373,19 +361,6 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
                                                 WPARAM wParam, LPARAM lParam)
 {
 	LRESULT result = 0;
-
-	WinjumpState *state = nullptr;
-	if (msg == WM_CREATE)
-	{
-		CREATESTRUCT *win32DeriveStruct = (CREATESTRUCT *)lParam;
-		state = (WinjumpState *)win32DeriveStruct->lpCreateParams;
-		SetWindowLongPtrW(window, OFFSET_TO_STATE_PTR, (LONG_PTR)state);
-	}
-	else
-	{
-		state = (WinjumpState *)GetWindowLongPtrW(window, OFFSET_TO_STATE_PTR);
-	}
-
 	switch (msg)
 	{
 		case WM_CREATE:
@@ -409,12 +384,11 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  NULL,
 			  NULL
 			);
-			state->window[winjumpwindows_input_search_entries] = editHandle;
+			globalState.window[winjumpwindow_input_search_entries] = editHandle;
 			SetFocus(editHandle);
-			state->defaultWindowProcEditBox = (WNDPROC)SetWindowLongPtrW(
+			globalState.defaultWindowProcEditBox = (WNDPROC)SetWindowLongPtrW(
 			    editHandle, GWLP_WNDPROC,
 			    (LONG_PTR)win32_capture_enter_callback);
-			SetWindowLongPtrW(editHandle, GWLP_USERDATA, (LONG_PTR)state);
 
 			HWND listHandle = CreateWindowExW(
 			  WS_EX_CLIENTEDGE | WS_EX_COMPOSITED,
@@ -431,7 +405,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  NULL,
 			  NULL
 			);
-			state->window[winjumpwindows_list_window_entries] = listHandle;
+			globalState.window[winjumpwindow_list_window_entries] = listHandle;
 
 			{ // Set To Use Default Font
 				NONCLIENTMETRICS metrics = {};
@@ -443,14 +417,14 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 				if (readFontResult)
 				{
-					state->defaultFont =
+					globalState.defaultFont =
 					    CreateFontIndirect(&metrics.lfMessageFont);
 					bool redrawImmediately = true;
-					for (i32 i = 0; i < winjumpwindows_count; i++)
+					for (i32 i = 0; i < winjumpwindow_count; i++)
 					{
-						HWND windowToSendMsg = state->window[i];
+						HWND windowToSendMsg = globalState.window[i];
 						SendMessageW(windowToSendMsg, WM_SETFONT,
-						            (WPARAM)state->defaultFont,
+						            (WPARAM)globalState.defaultFont,
 						            redrawImmediately);
 					}
 					// TODO(doyle): Clean up, DeleteObject(defaultFont);
@@ -468,11 +442,11 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 		{
 			WORD notificationCode = HIWORD((DWORD)wParam);
 			HWND handle           = (HWND)lParam;
-			if (handle == state->window[win32resource_list])
+			if (handle == globalState.window[win32resource_list])
 			{
 				if (notificationCode == LBN_SELCHANGE)
 				{
-					Win32ProgramArray programArray = state->programArray;
+					Win32ProgramArray programArray = globalState.programArray;
 					LRESULT selectedIndex =
 					    SendMessageW(handle, LB_GETCURSEL, 0, 0);
 
@@ -486,10 +460,8 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 						LRESULT itemPid = SendMessageW(handle, LB_GETITEMDATA,
 						                              selectedIndex, 0);
 						DQN_ASSERT((u32)itemPid == programToShow.pid);
-
 						SendMessageW(handle, LB_SETCURSEL, (WPARAM)-1, 0);
-
-						winjump_display_window(programToShow.window);
+						win32_display_window(programToShow.window);
 					}
 				}
 			}
@@ -505,9 +477,8 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 		case WM_HOTKEY:
 		{
-			winjump_display_window(window);
-
-			HWND editBox = state->window[winjumpwindows_input_search_entries];
+			win32_display_window(window);
+			HWND editBox = globalState.window[winjumpwindow_input_search_entries];
 			SetFocus(editBox);
 		}
 		break;
@@ -523,7 +494,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			{
 				// Resize the edit box that is used for filtering
 				HWND editWindow =
-				    state->window[winjumpwindows_input_search_entries];
+				    globalState.window[winjumpwindow_input_search_entries];
 
 				DqnV2 editP    = dqn_v2i(margin, margin);
 				i32 editWidth  = clientWidth - (2 * margin);
@@ -534,7 +505,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 				// Resize the edit box that is used for filtering
 				HWND listWindow =
-				    state->window[winjumpwindows_list_window_entries];
+				    globalState.window[winjumpwindow_list_window_entries];
 
 				DqnV2 listP = dqn_v2(editP.x, (editP.y + editHeight + margin));
 				i32 listWidth = clientWidth - (2 * margin);
@@ -562,8 +533,8 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 void winjump_update(WinjumpState *state)
 {
-	Win32ProgramArray *programArray = &state->programArray;
-	HWND listBox = state->window[winjumpwindows_list_window_entries];
+	Win32ProgramArray *programArray = &globalState.programArray;
+	HWND listBox = globalState.window[winjumpwindow_list_window_entries];
 
 	// Insert new programs into the list box and remove dead ones
 	{
@@ -653,7 +624,7 @@ void winjump_update(WinjumpState *state)
 
 	// Get Line from Edit Control and filter list results
 	{
-		HWND editBox = state->window[winjumpwindows_input_search_entries];
+		HWND editBox = globalState.window[winjumpwindow_input_search_entries];
 
 		// NOTE: Set first char is size of buffer as required by win32
 		wchar_t searchString[WIN32_MAX_PROGRAM_TITLE] = {};
@@ -664,7 +635,7 @@ void winjump_update(WinjumpState *state)
 		wchar_str_to_lower(searchString, searchStringLen);
 		if (searchStringLen > 0)
 		{
-			state->currentlyFiltering = true;
+			globalState.currentlyFiltering = true;
 			DQN_ASSERT(searchStringLen < WIN32_MAX_PROGRAM_TITLE);
 
 			for (i32 i = 0; i < programArray->index; i++)
@@ -737,14 +708,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd)
 {
 	winjump_unit_test_local_functions();
-	i32 bytesToReserveAfterWindowInst = sizeof(WinjumpState *);
 
 	WNDCLASSEXW wc = {
 	    sizeof(WNDCLASSEX),
 	    CS_HREDRAW | CS_VREDRAW,
 	    win32_main_callback,
-	    0,                             // int cbClsExtra
-	    bytesToReserveAfterWindowInst, // int cbWndExtra
+	    0, // int cbClsExtra
+	    0, // int cbWndExtra
 	    hInstance,
 	    LoadIcon(NULL, IDI_APPLICATION),
 	    LoadCursor(NULL, IDC_ARROW),
@@ -756,7 +726,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	if (!RegisterClassExW(&wc))
 	{
-		// TODO(doyle): Logging, couldn't register class
 		DQN_WIN32_ERROR_BOX("RegisterClassExW() failed.", NULL);
 		return -1;
 	}
@@ -788,7 +757,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		DQN_WIN32_ERROR_BOX("CreateWindowExW() failed.", NULL);
 		return -1;
 	}
-	state.window[winjumpwindows_main_client] = mainWindow;
+	globalState.window[winjumpwindow_main_client] = mainWindow;
 
 #define GUID_HOTKEY_ACTIVATE_APP 10983
 	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
