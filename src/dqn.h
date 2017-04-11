@@ -69,7 +69,7 @@ bool  dqn_darray_init (DqnArray<T> *array, size_t capacity);
 template <typename T>
 bool  dqn_darray_grow (DqnArray<T> *array);
 template <typename T>
-bool dqn_darray_push(DqnArray<T> *array, const T &item);
+bool dqn_darray_push(DqnArray<T> *array, T item);
 template <typename T>
 T    *dqn_darray_get  (DqnArray<T> *array, u64 index);
 template <typename T>
@@ -334,7 +334,7 @@ bool dqn_darray_grow(DqnArray<T> *array)
 }
 
 template <typename T>
-bool dqn_darray_push(DqnArray<T> *array, const T &item)
+bool dqn_darray_push(DqnArray<T> *array, T item)
 {
 	if (!array) return false;
 
@@ -377,14 +377,17 @@ bool dqn_darray_free(DqnArray<T> *array)
 		free(array->data);
 		array->count    = 0;
 		array->capacity = 0;
+		return true;
 	}
+
+	return false;
 }
 
 template <typename T>
 bool dqn_darray_remove(DqnArray<T> *array, u64 index)
 {
 	if (!array) return false;
-	if (index > array->count) return false;
+	if (index >= array->count) return false;
 
 	bool firstElementAndOnlyElement = (index == 0 && array->count == 1);
 	bool isLastElement              = (index == (array->count - 1));
@@ -396,13 +399,14 @@ bool dqn_darray_remove(DqnArray<T> *array, u64 index)
 
 	array->data[index] = array->data[array->count - 1];
 	array->count--;
+	return true;
 }
 
 template <typename T>
 bool dqn_darray_remove_stable(DqnArray<T> *array, u64 index)
 {
 	if (!array) return false;
-	if (index > array->count) return false;
+	if (index >= array->count) return false;
 
 	bool firstElementAndOnlyElement = (index == 0 && array->count == 1);
 	bool isLastElement              = (index == (array->count - 1));
@@ -414,7 +418,7 @@ bool dqn_darray_remove_stable(DqnArray<T> *array, u64 index)
 
 	size_t itemToRemoveByteOffset         = (size_t)(index * sizeof(T));
 	size_t oneAfterItemToRemoveByteOffset = (size_t)((index + 1) * sizeof(T));
-	size_t lastItemByteOffset = (size_t)((array->count - 1) * sizeof(T));
+	size_t lastItemByteOffset = (size_t)(array->count * sizeof(T));
 	size_t numBytesToMove = lastItemByteOffset - oneAfterItemToRemoveByteOffset;
 
 	u8 *bytePtr = (u8 *)array->data;

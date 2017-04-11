@@ -406,7 +406,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			////////////////////////////////////////////////////////////////////
 			InitCommonControls();
 			HWND statusWindow = CreateWindowExW(
-			    0,                         // no extended styles
+			    WS_EX_COMPOSITED,
 			    STATUSCLASSNAMEW,          // name of status bar class
 			    NULL,                      // no text when first created
 			    SBARS_SIZEGRIP |           // includes a sizing grip
@@ -511,7 +511,25 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			GetClientRect(globalState.window[winjumpwindow_status_bar],
 			              &statusBarRect);
 			LONG statusBarHeight = statusBarRect.bottom;
-			LONG statusBarWidth  = statusBarRect.right;
+			////////////////////////////////////////////////////////////////////
+			// Re-configure Status Bar on Resize
+			////////////////////////////////////////////////////////////////////
+			{
+				HWND status = globalState.window[winjumpwindow_status_bar];
+
+				// Setup the parts of the status bar
+				const WPARAM numParts  = 3;
+				i32 partsPos[numParts] = {};
+
+				i32 partsInterval = clientWidth / numParts;
+				for (i32 i = 0; i < numParts; i++)
+					partsPos[i] = partsInterval * (i + 1);
+				SendMessageW(status, SB_SETPARTS, numParts, (LPARAM)partsPos);
+
+				// Pass through message so windows can handle anchoring the bar
+				SendMessage(status, WM_SIZE, wParam, lParam);
+			}
+
 			////////////////////////////////////////////////////////////////////
 			// Position Edit Box and List Box
 			////////////////////////////////////////////////////////////////////
@@ -538,24 +556,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				           listHeight, TRUE);
 			}
 
-			////////////////////////////////////////////////////////////////////
-			// Re-configure Status Bar on Resize
-			////////////////////////////////////////////////////////////////////
-			{
-				HWND status = globalState.window[winjumpwindow_status_bar];
-				// Pass through message so windows can handle anchoring the bar
-				SendMessage(status, WM_SIZE, wParam, lParam);
-
-				// Setup the parts of the status bar
-				const WPARAM numParts  = 3;
-				i32 partsPos[numParts] = {};
-
-				i32 partsInterval = statusBarWidth / numParts;
-				for (i32 i = 0; i < numParts; i++)
-					partsPos[i] = partsInterval * (i + 1);
-				SendMessageW(status, SB_SETPARTS, numParts, (LPARAM)partsPos);
-			}
-			result = DefWindowProcW(window, msg, wParam, lParam);
+			// result = DefWindowProcW(window, msg, wParam, lParam);
 		}
 		break;
 
