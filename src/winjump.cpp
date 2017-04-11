@@ -13,6 +13,7 @@
 #include <Windowsx.h>
 #include <Shlwapi.h>
 #include <commctrl.h>
+
 // For win32 GetProcessMemoryInfo()
 #include <Psapi.h>
 
@@ -154,12 +155,6 @@ enum WinjumpWindows
 	winjumpwindow_count,
 };
 
-typedef struct Win32ProgramArray
-{
-	Win32Program item[128];
-	i32          index;
-} Win32ProgramArray;
-
 enum Win32Resources
 {
 	win32resource_edit_text_buffer,
@@ -174,8 +169,8 @@ typedef struct WinjumpState
 	WNDPROC defaultWindowProc;
 	WNDPROC defaultWindowProcEditBox;
 
-	Win32ProgramArray programArray;
-	bool currentlyFiltering;
+	DqnArray<Win32Program> programArray;
+	bool                   currentlyFiltering;
 } WinjumpState;
 
 #define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
@@ -212,74 +207,65 @@ FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
 
 BOOL CALLBACK win32_enum_procs_callback(HWND window, LPARAM lParam)
 {
-	Win32ProgramArray *programArray = (Win32ProgramArray *)lParam;
-	if ((programArray->index + 1) < DQN_ARRAY_COUNT(programArray->item))
+	DqnArray<Win32Program> *programArray = &globalState.programArray;
+	Win32Program program = {};
+	i32 titleLen =
+	    GetWindowTextW(window, program.title, WIN32_MAX_PROGRAM_TITLE);
+	program.titleLen = titleLen;
+
+	// If we receive an empty string as a window title, then we want to
+	// ignore it. So if the string is defined, then we increment index
+	if (titleLen > 0)
 	{
-		Win32Program program = {};
-		i32 titleLen =
-		    GetWindowTextW(window, program.title, WIN32_MAX_PROGRAM_TITLE);
-		program.titleLen = titleLen;
-
-		// If we receive an empty string as a window title, then we want to
-		// ignore it. So if the string is defined, then we increment index
-		if (titleLen > 0)
+		/*
+		   SIMULATING ALT-TAB WINDOW RESULTS by Raymond Chen
+		   https://blogs.msdn.microsoft.com/oldnewthing/20071008-00/?p=24863/
+		   For each visible window, walk up its owner chain until you find
+		   the root owner.  Then walk back down the visible last active
+		   popup chain until you find a visible window. If you're back to
+		   where you're started, then put the window in the Alt+Tab list.
+		 */
+		HWND rootWindow = GetAncestor(window, GA_ROOTOWNER);
+		HWND lastPopup;
+		do
 		{
-			/*
-			   SIMULATING ALT-TAB WINDOW RESULTS by Raymond Chen
-			   https://blogs.msdn.microsoft.com/oldnewthing/20071008-00/?p=24863/
-			   For each visible window, walk up its owner chain until you find
-			   the root owner.  Then walk back down the visible last active
-			   popup chain until you find a visible window. If you're back to
-			   where you're started, then put the window in the Alt+Tab list.
-			 */
-
-			HWND rootWindow = GetAncestor(window, GA_ROOTOWNER);
-			HWND lastPopup;
-			do
+			lastPopup = GetLastActivePopup(rootWindow);
+			if (IsWindowVisible(lastPopup) && lastPopup == window)
 			{
-				lastPopup = GetLastActivePopup(rootWindow);
-				if (IsWindowVisible(lastPopup) && lastPopup == window)
+				GetWindowThreadProcessId(window, &program.pid);
+
+				program.window = window;
+				HANDLE handle  = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+				                            FALSE, program.pid);
+				if (handle != nullptr)
 				{
-					GetWindowThreadProcessId(window, &program.pid);
+					DWORD len   = DQN_ARRAY_COUNT(program.exe);
+					BOOL result = QueryFullProcessImageNameW(handle, 0,
+					                                         program.exe, &len);
+					DQN_ASSERT(result != 0);
 
-					program.window = window;
-					HANDLE handle  = OpenProcess(
-					    PROCESS_QUERY_LIMITED_INFORMATION, FALSE, program.pid);
-					if (handle != nullptr)
-					{
-						DWORD len   = DQN_ARRAY_COUNT(program.exe);
-						BOOL result = QueryFullProcessImageNameW(
-						    handle, 0, program.exe, &len);
-						DQN_ASSERT(result != 0);
+					// Len is input as the initial size of array, it then
+					// gets modified and returns the number of characters in
+					// the result. If len is then the len of the array,
+					// there's potential that the path name got clipped.
+					DQN_ASSERT(len != DQN_ARRAY_COUNT(program.exe));
 
-						// Len is input as the initial size of array, it then
-						// gets modified and returns the number of characters in
-						// the result. If len is then the len of the array,
-						// there's potential that the path name got clipped.
-						DQN_ASSERT(len != DQN_ARRAY_COUNT(program.exe));
-
-						PathStripPathW(program.exe);
-						program.exeLen = wstrlen(program.exe);
-						CloseHandle(handle);
-					}
-
-					programArray->item[programArray->index++] = program;
-					break;
+					PathStripPathW(program.exe);
+					program.exeLen = wstrlen(program.exe);
+					CloseHandle(handle);
 				}
 
-				rootWindow = lastPopup;
-				lastPopup  = GetLastActivePopup(rootWindow);
-			} while (lastPopup != rootWindow);
-		}
+				dqn_darray_push(programArray, program);
+				break;
+			}
 
-		return true;
+			rootWindow = lastPopup;
+			lastPopup  = GetLastActivePopup(rootWindow);
+		} while (lastPopup != rootWindow);
 	}
-	else
-	{
-		// NOTE(doyle): Returning false will stop any new window enumeration
-		// results
-		return false;
-	}
+
+
+	return true;
 }
 
 FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
@@ -300,10 +286,12 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 			{
 				case VK_RETURN:
 				{
-					if (globalState.programArray.index > 0)
+					DqnArray<Win32Program> *programArray =
+					    &globalState.programArray;
+					if (programArray->count > 0)
 					{
-						Win32Program programToShow =
-						    globalState.programArray.item[0];
+						Win32Program programToShow = programArray->data[0];
+
 						win32_display_window(programToShow.window);
 						SetWindowText(editWindow, "");
 						ShowWindow(
@@ -473,22 +461,23 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			{
 				if (notificationCode == LBN_SELCHANGE)
 				{
-					Win32ProgramArray programArray = globalState.programArray;
 					LRESULT selectedIndex =
 					    SendMessageW(handle, LB_GETCURSEL, 0, 0);
 
 					// NOTE: LB_ERR if list unselected
 					if (selectedIndex != LB_ERR)
 					{
-						DQN_ASSERT(selectedIndex < DQN_ARRAY_COUNT(programArray.item));
+						DqnArray<Win32Program> *programArray =
+						    &globalState.programArray;
+						DQN_ASSERT(selectedIndex < programArray->count);
 
-						Win32Program programToShow =
-						    programArray.item[selectedIndex];
+						Win32Program showProgram =
+						    programArray->data[selectedIndex];
 						LRESULT itemPid = SendMessageW(handle, LB_GETITEMDATA,
-						                              selectedIndex, 0);
-						DQN_ASSERT((u32)itemPid == programToShow.pid);
+						                               selectedIndex, 0);
+						DQN_ASSERT((u32)itemPid == showProgram.pid);
 						SendMessageW(handle, LB_SETCURSEL, (WPARAM)-1, 0);
-						win32_display_window(programToShow.window);
+						win32_display_window(showProgram.window);
 					}
 				}
 			}
@@ -583,28 +572,26 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 void winjump_update()
 {
-	Win32ProgramArray *programArray = &globalState.programArray;
+	DqnArray<Win32Program> *programArray = &globalState.programArray;
 	HWND listBox = globalState.window[winjumpwindow_list_window_entries];
 
 	////////////////////////////////////////////////////////////////////////////
 	// Insert new programs into the list box and remove dead ones
 	////////////////////////////////////////////////////////////////////////////
 	{
-		// TODO(doyle): Separate ui update from internal state update
-		Win32ProgramArray emptyArray = {};
-		*programArray                = emptyArray;
-		DQN_ASSERT(programArray->index == 0);
+		DQN_ASSERT(dqn_darray_clear(programArray));
 		EnumWindows(win32_enum_procs_callback, (LPARAM)programArray);
 
 		const LRESULT listFirstVisibleIndex =
 		    SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
 
 		// Check displayed list entries against our new enumerated programs list
+		i32 programArraySize   = (i32)programArray->count;
 		const LRESULT listSize = SendMessageW(listBox, LB_GETCOUNT, 0, 0);
 		for (LRESULT index = 0;
-		     (index < listSize) && (index < programArray->index); index++)
+		     (index < listSize) && (index < programArraySize); index++)
 		{
-			Win32Program *currProgram = &programArray->item[index];
+			Win32Program *currProgram = &programArray->data[index];
 
 			// TODO(doyle): Tighten memory alloc using len vars in program
 			// TODO(doyle): snprintf?
@@ -641,11 +628,11 @@ void winjump_update()
 		}
 
 		// Fill the remainder of the list
-		if (listSize < programArray->index)
+		if (listSize < programArraySize)
 		{
-			for (i32 i = listSize; i < programArray->index; i++)
+			for (i32 i = listSize; i < programArraySize; i++)
 			{
-				Win32Program *program = &programArray->item[i];
+				Win32Program *program = &programArray->data[i];
 				const i32 len         = DQN_ARRAY_COUNT(program->title) +
 				                DQN_ARRAY_COUNT(program->exe) + 4;
 				wchar_t friendlyName[len] = {};
@@ -659,7 +646,7 @@ void winjump_update()
 		}
 		else
 		{
-			for (i32 i = programArray->index; i < listSize; i++)
+			for (i32 i = programArraySize; i < listSize; i++)
 			{
 				LRESULT result = SendMessageW(listBox, LB_DELETESTRING, i, 0);
 			}
@@ -692,9 +679,10 @@ void winjump_update()
 			globalState.currentlyFiltering = true;
 			DQN_ASSERT(searchStringLen < WIN32_MAX_PROGRAM_TITLE);
 
-			for (i32 i = 0; i < programArray->index; i++)
+			u64 programArraySize = programArray->count;
+			for (i32 i = 0; i < programArraySize; i++)
 			{
-				Win32Program *program = &programArray->item[i];
+				Win32Program *program = &programArray->data[i];
 				const i32 friendlyNameLen = DQN_ARRAY_COUNT(program->title) +
 				                            DQN_ARRAY_COUNT(program->exe) + 4;
 				wchar_t friendlyName[friendlyNameLen] = {};
@@ -708,18 +696,13 @@ void winjump_update()
 					// If search string doesn't match, delete it from display
 					LRESULT result =
 					    SendMessageW(listBox, LB_DELETESTRING, i, 0);
-					for (i32 j = i; j + 1 < programArray->index; j++)
-						programArray->item[j] = programArray->item[j + 1];
+					DQN_ASSERT(dqn_darray_remove_stable(programArray, i--));
 
-					// Update indexes so we continue iterating over the correct
-					// elements after removing it from the list
-					i--;
-					programArray->index--;
-					if (programArray->index >= 0)
-					{
-						Win32Program emptyProgram               = {};
-						programArray->item[programArray->index] = emptyProgram;
-					}
+					// Update index so we continue iterating over the correct
+					// elements after removing it from the list since the for
+					// loop is post increment and we're removing elements from
+					// the list
+					programArraySize--;
 				}
 			}
 		}
@@ -811,7 +794,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		return -1;
 	}
 
-	globalState.defaultWindowProc                 = win32_main_callback;
+	if (!dqn_darray_init(&globalState.programArray, 4))
+	{
+		DQN_WIN32_ERROR_BOX("dqn_darray_init() failed: Not enough memory.",
+		                    NULL);
+		return -1;
+	}
+
+	globalState.defaultWindowProc = win32_main_callback;
 	globalState.window[winjumpwindow_main_client] = mainWindow;
 
 #define GUID_HOTKEY_ACTIVATE_APP 10983
@@ -844,7 +834,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				WPARAM partToDisplayAt = 2;
 				char text[32]          = {};
 				stbsp_sprintf(text, "Active Windows: %d",
-				              globalState.programArray.index);
+				              globalState.programArray.count);
 				SendMessage(status, SB_SETTEXT, partToDisplayAt, (LPARAM)text);
 			}
 
