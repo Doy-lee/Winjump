@@ -19,6 +19,9 @@
 
 #include <stdio.h>
 
+// TODO(doyle): Safer subclassing?
+// https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
+
 // TODO(doyle): Organise all our globals siting around.
 // TODO(doyle): Search by index in list to help drilldown after the initial
 // search
@@ -168,6 +171,7 @@ typedef struct WinjumpState
 	HWND    window[winjumpwindow_count];
 	WNDPROC defaultWindowProc;
 	WNDPROC defaultWindowProcEditBox;
+	WNDPROC defaultWindowProcListBox;
 
 	DqnArray<Win32Program> programArray;
 	bool                   currentlyFiltering;
@@ -268,6 +272,46 @@ BOOL CALLBACK win32_enum_procs_callback(HWND window, LPARAM lParam)
 	return true;
 }
 
+FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
+                                                    WPARAM wParam,
+                                                    LPARAM lParam)
+{
+	LRESULT result = 0;
+	switch (msg)
+	{
+		case WM_ERASEBKGND:
+		{
+			return true;
+		}
+		break;
+
+		case WM_PAINT:
+		{
+			RECT clientRect;
+			GetClientRect(window, &clientRect);
+
+			PAINTSTRUCT paint = {};
+			HDC deviceContext = BeginPaint(window, &paint);
+			FillRect(deviceContext, &clientRect, GetSysColorBrush(COLOR_WINDOW));
+			CallWindowProcW(globalState.defaultWindowProcListBox, window,
+			                WM_PAINT, (WPARAM)deviceContext, (LPARAM)0);
+			BitBlt(deviceContext, 0, 0, clientRect.right, clientRect.bottom,
+			       deviceContext, 0, 0, SRCCOPY);
+			EndPaint(window, &paint);
+		}
+		break;
+
+		default:
+		{
+			return CallWindowProcW(globalState.defaultWindowProcListBox, window,
+			                       msg, wParam, lParam);
+		}
+		break;
+	}
+
+	return result;
+}
+
 FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
                                                          UINT msg,
                                                          WPARAM wParam,
@@ -332,7 +376,7 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 				default:
 				{
 					return CallWindowProcW(globalState.defaultWindowProcEditBox,
-					                      editWindow, msg, wParam, lParam);
+					                       editWindow, msg, wParam, lParam);
 				}
 			}
 		}
@@ -399,6 +443,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  NULL,
 			  NULL
 			);
+			globalState.defaultWindowProcListBox = (WNDPROC)SetWindowLongPtrW(
+			    listWindow, GWLP_WNDPROC,
+			    (LONG_PTR)win32_list_box_callback);
 			globalState.window[winjumpwindow_list_window_entries] = listWindow;
 
 			////////////////////////////////////////////////////////////////////
@@ -438,10 +485,11 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 					for (i32 i = 0; i < winjumpwindow_count; i++)
 					{
 						HWND windowToSendMsg = globalState.window[i];
-						SendMessageW(windowToSendMsg, WM_SETFONT,
+						SendMessage(windowToSendMsg, WM_SETFONT,
 						            (WPARAM)globalState.defaultFont,
 						            redrawImmediately);
 					}
+
 					// TODO(doyle): Clean up, DeleteObject(defaultFont);
 				}
 				else
@@ -556,7 +604,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				           listHeight, TRUE);
 			}
 
-			// result = DefWindowProcW(window, msg, wParam, lParam);
+			result = DefWindowProcW(window, msg, wParam, lParam);
 		}
 		break;
 
@@ -575,17 +623,60 @@ void winjump_update()
 {
 	DqnArray<Win32Program> *programArray = &globalState.programArray;
 	HWND listBox = globalState.window[winjumpwindow_list_window_entries];
+	i32 firstVisibleIndex = SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
+
+	DQN_ASSERT(dqn_darray_clear(programArray));
+	EnumWindows(win32_enum_procs_callback, (LPARAM)programArray);
 
 	////////////////////////////////////////////////////////////////////////////
-	// Insert new programs into the list box and remove dead ones
+	// Filter program array if user is actively searching
 	////////////////////////////////////////////////////////////////////////////
 	{
-		DQN_ASSERT(dqn_darray_clear(programArray));
-		EnumWindows(win32_enum_procs_callback, (LPARAM)programArray);
+		HWND editBox = globalState.window[winjumpwindow_input_search_entries];
 
-		const LRESULT listFirstVisibleIndex =
-		    SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
+		// NOTE: Set first char is size of buffer as required by win32
+		wchar_t searchString[WIN32_MAX_PROGRAM_TITLE] = {};
+		searchString[0] = DQN_ARRAY_COUNT(searchString);
 
+		LRESULT searchStringLen =
+		    SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)searchString);
+		wchar_str_to_lower(searchString, searchStringLen);
+		if (searchStringLen > 0)
+		{
+			globalState.currentlyFiltering = true;
+			DQN_ASSERT(searchStringLen < WIN32_MAX_PROGRAM_TITLE);
+
+			u64 programArraySize = programArray->count;
+			for (i32 i = 0; i < programArraySize; i++)
+			{
+				Win32Program *program = &programArray->data[i];
+				const i32 friendlyNameLen = DQN_ARRAY_COUNT(program->title) +
+				                            DQN_ARRAY_COUNT(program->exe) + 4;
+				wchar_t friendlyName[friendlyNameLen] = {};
+				winjump_get_program_friendly_name(program, friendlyName,
+				                                  friendlyNameLen);
+
+				wchar_t *searchPtr = searchString;
+				if (!wchar_has_substring(searchString, searchStringLen,
+				                         friendlyName, friendlyNameLen))
+				{
+					// If search string doesn't match, delete it from display
+					DQN_ASSERT(dqn_darray_remove_stable(programArray, i--));
+
+					// Update index so we continue iterating over the correct
+					// elements after removing it from the list since the for
+					// loop is post increment and we're removing elements from
+					// the list
+					programArraySize--;
+				}
+			}
+		}
+	}
+
+	////////////////////////////////////////////////////////////////////////////
+	// Compare internal list with list box and remove dead ones
+	////////////////////////////////////////////////////////////////////////////
+	{
 		// Check displayed list entries against our new enumerated programs list
 		i32 programArraySize   = (i32)programArray->count;
 		const LRESULT listSize = SendMessageW(listBox, LB_GETCOUNT, 0, 0);
@@ -653,60 +744,7 @@ void winjump_update()
 			}
 		}
 
-		SendMessageW(listBox, LB_SETTOPINDEX, listFirstVisibleIndex, 0);
-	}
-
-	// TODO(doyle): Currently filtering will refilter the list every
-	// time, causing reflashing on the screen as the control updates
-	// multiple times per second. We should have a "changed" flag or
-	// something so we can just keep the old list if nothing has
-	// changed or, only change the ones that have changed.
-
-	////////////////////////////////////////////////////////////////////////////
-	// Update List if there's any search filtering
-	////////////////////////////////////////////////////////////////////////////
-	{
-		HWND editBox = globalState.window[winjumpwindow_input_search_entries];
-
-		// NOTE: Set first char is size of buffer as required by win32
-		wchar_t searchString[WIN32_MAX_PROGRAM_TITLE] = {};
-		searchString[0] = DQN_ARRAY_COUNT(searchString);
-
-		LRESULT searchStringLen =
-		    SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)searchString);
-		wchar_str_to_lower(searchString, searchStringLen);
-		if (searchStringLen > 0)
-		{
-			globalState.currentlyFiltering = true;
-			DQN_ASSERT(searchStringLen < WIN32_MAX_PROGRAM_TITLE);
-
-			u64 programArraySize = programArray->count;
-			for (i32 i = 0; i < programArraySize; i++)
-			{
-				Win32Program *program = &programArray->data[i];
-				const i32 friendlyNameLen = DQN_ARRAY_COUNT(program->title) +
-				                            DQN_ARRAY_COUNT(program->exe) + 4;
-				wchar_t friendlyName[friendlyNameLen] = {};
-				winjump_get_program_friendly_name(program, friendlyName,
-				                                  friendlyNameLen);
-
-				wchar_t *searchPtr = searchString;
-				if (!wchar_has_substring(searchString, searchStringLen,
-				                         friendlyName, friendlyNameLen))
-				{
-					// If search string doesn't match, delete it from display
-					LRESULT result =
-					    SendMessageW(listBox, LB_DELETESTRING, i, 0);
-					DQN_ASSERT(dqn_darray_remove_stable(programArray, i--));
-
-					// Update index so we continue iterating over the correct
-					// elements after removing it from the list since the for
-					// loop is post increment and we're removing elements from
-					// the list
-					programArraySize--;
-				}
-			}
-		}
+		SendMessageW(listBox, LB_SETTOPINDEX, firstVisibleIndex, 0);
 	}
 
 }
@@ -848,7 +886,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					WPARAM partToDisplayAt = 1;
 					char text[32]          = {};
 					stbsp_sprintf(text, "Memory: %'dkb",
-					              (u32)(memCounter.WorkingSetSize / 1024.0f));
+					              (u32)(memCounter.PagefileUsage / 1024.0f));
 					SendMessage(status, SB_SETTEXT, partToDisplayAt,
 					            (LPARAM)text);
 				}
