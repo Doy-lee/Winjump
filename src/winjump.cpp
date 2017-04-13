@@ -167,7 +167,6 @@ enum Win32Resources
 
 typedef struct WinjumpState
 {
-	HFONT   defaultFont;
 	HWND    window[winjumpwindow_count];
 	WNDPROC defaultWindowProc;
 	WNDPROC defaultWindowProcEditBox;
@@ -281,7 +280,18 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 	{
 		case WM_ERASEBKGND:
 		{
+			
+			// NOTE: Returning true overrides background erasing which can
+			// reduce flicker. But if we do so, slowly dragging the list box
+			// will show the black erased background because, I think,
+			// WM_PAINT's aren't being called but something else, so our
+			// FillRect is not being called.
+#if 0
 			return true;
+#else
+			return CallWindowProcW(globalState.defaultWindowProcListBox, window,
+			                       msg, wParam, lParam);
+#endif
 		}
 		break;
 
@@ -292,7 +302,8 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 
 			PAINTSTRUCT paint = {};
 			HDC deviceContext = BeginPaint(window, &paint);
-			FillRect(deviceContext, &clientRect, GetSysColorBrush(COLOR_WINDOW));
+			FillRect(deviceContext, &clientRect,
+			         GetSysColorBrush(COLOR_WINDOW));
 			CallWindowProcW(globalState.defaultWindowProcListBox, window,
 			                WM_PAINT, (WPARAM)deviceContext, (LPARAM)0);
 			BitBlt(deviceContext, 0, 0, clientRect.right, clientRect.bottom,
@@ -470,32 +481,13 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			// Use Default Font
 			////////////////////////////////////////////////////////////////////
 			{
-				NONCLIENTMETRICS metrics = {};
-				metrics.cbSize           = sizeof(NONCLIENTMETRICS);
-
-				i32 readFontResult = SystemParametersInfo(
-				    SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &metrics,
-				    0);
-
-				if (readFontResult)
+				bool redrawImmediately = true;
+				HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+				for (i32 i = 0; i < winjumpwindow_count; i++)
 				{
-					globalState.defaultFont =
-					    CreateFontIndirect(&metrics.lfMessageFont);
-					bool redrawImmediately = true;
-					for (i32 i = 0; i < winjumpwindow_count; i++)
-					{
-						HWND windowToSendMsg = globalState.window[i];
-						SendMessage(windowToSendMsg, WM_SETFONT,
-						            (WPARAM)globalState.defaultFont,
-						            redrawImmediately);
-					}
-
-					// TODO(doyle): Clean up, DeleteObject(defaultFont);
-				}
-				else
-				{
-					// TODO(doyle): Logging, default font query failed
-					DQN_ASSERT(DQN_INVALID_CODE_PATH);
+					HWND targetWindow = globalState.window[i];
+					SendMessage(targetWindow, WM_SETFONT, (WPARAM)font,
+					            redrawImmediately);
 				}
 			}
 		}
@@ -846,7 +838,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 #define GUID_HOTKEY_ACTIVATE_APP 10983
 	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
 
-	const f32 targetFramesPerSecond = 8.0f;
+	const f32 targetFramesPerSecond = 24.0f;
 	f32 targetSecondsPerFrame       = 1 / targetFramesPerSecond;
 	f32 targetMsPerFrame            = targetSecondsPerFrame * 1000.0f;
 	f32 frameTimeInS                = 0.0f;
