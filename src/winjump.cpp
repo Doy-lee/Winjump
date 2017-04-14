@@ -10,6 +10,7 @@
   #define WIN32_LEAN_AND_MEAN
 #endif
 
+#include <Windows.h>
 #include <Windowsx.h>
 #include <Shlwapi.h>
 #include <commctrl.h>
@@ -30,7 +31,7 @@
 // TODO(doyle): Clean up this cesspool.
 
 // Returns length without null terminator, returns 0 if NULL
-FILE_SCOPE i32 wstrlen(const wchar_t *a)
+FILE_SCOPE i32 wstrlen(const wchar_t *const a)
 {
 	i32 result = 0;
 	while (a && a[result]) result++;
@@ -44,6 +45,11 @@ FILE_SCOPE i32 wstrlen_delimit_with(const wchar_t *a, const wchar_t delimiter)
 	return result;
 }
 
+FILE_SCOPE bool wchar_is_digit(const wchar_t c)
+{
+	if (c >= L'0' && c <= L'9') return true;
+	return false;
+}
 
 FILE_SCOPE inline i32 wstrcmp(const wchar_t *a, const wchar_t *b)
 {
@@ -72,13 +78,13 @@ FILE_SCOPE inline wchar_t wchar_to_lower(const wchar_t a)
 	return a;
 }
 
-FILE_SCOPE inline bool wchar_has_substring(wchar_t *a, i32 lenA,
-                                           wchar_t *b, i32 lenB)
+FILE_SCOPE inline bool wchar_has_substring(const wchar_t *const a, const i32 lenA,
+                                           const wchar_t *const b, const i32 lenB)
 {
 	if (!a || !b) return false;
 	if (lenA == 0 || lenB == 0) return false;
 
-	wchar_t *longStr, *shortStr;
+	const wchar_t *longStr, *shortStr;
 	i32 longLen, shortLen;
 	if (lenA > lenB)
 	{
@@ -107,7 +113,7 @@ FILE_SCOPE inline bool wchar_has_substring(wchar_t *a, i32 lenA,
 		i32 remainingLenInLongStr = longLen - indexIntoLong;
 		if (remainingLenInLongStr < shortLen) break;
 
-		wchar_t *longSubstr = &longStr[indexIntoLong];
+		const wchar_t *longSubstr = &longStr[indexIntoLong];
 		i32 index = 0;
 		for (;;)
 		{
@@ -131,11 +137,47 @@ FILE_SCOPE inline bool wchar_has_substring(wchar_t *a, i32 lenA,
 	return matchedSubstr;
 }
 
-FILE_SCOPE inline void wchar_str_to_lower(wchar_t *a, i32 len)
+FILE_SCOPE inline void wchar_str_to_lower(wchar_t *const a, const i32 len)
 {
 	for (i32 i = 0; i < len; i++)
 		a[i]   = wchar_to_lower(a[i]);
 }
+
+FILE_SCOPE i32 wchar_str_to_i32(const wchar_t *const buf, const i32 bufSize)
+{
+	if (!buf || bufSize == 0) return 0;
+
+	i32 index       = 0;
+	bool isNegative = false;
+	if (buf[index] == L'-' || buf[index] == L'+')
+	{
+		if (buf[index] == L'-') isNegative = true;
+		index++;
+	}
+	else if (!wchar_is_digit(buf[index]))
+	{
+		return 0;
+	}
+
+	i32 result = 0;
+	for (i32 i = index; i < bufSize; i++)
+	{
+		if (wchar_is_digit(buf[i]))
+		{
+			result *= 10;
+			result += (buf[i] - L'0');
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	if (isNegative) result *= -1;
+
+	return result;
+}
+
 
 typedef struct Win32Program
 {
@@ -147,26 +189,22 @@ typedef struct Win32Program
 
 	HWND    window;
 	DWORD   pid;
+
+	i32 lastStableIndex;
 } Win32Program;
 
 enum WinjumpWindows
 {
 	winjumpwindow_main_client,
-	winjumpwindow_list_window_entries,
+	winjumpwindow_list_program_entries,
 	winjumpwindow_input_search_entries,
 	winjumpwindow_status_bar,
 	winjumpwindow_count,
 };
 
-enum Win32Resources
-{
-	win32resource_edit_text_buffer,
-	win32resource_list,
-	win32resource_status_bar,
-};
-
 typedef struct WinjumpState
 {
+	HFONT   font;
 	HWND    window[winjumpwindow_count];
 	WNDPROC defaultWindowProc;
 	WNDPROC defaultWindowProcEditBox;
@@ -192,18 +230,22 @@ FILE_SCOPE void win32_display_window(HWND window)
 // - outLen: Length of the output buffer
 
 // Returns the number of characters stored into the buffer
+#define FRIENDLY_NAME_LEN 250
 FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
-                                              wchar_t *out, i32 outLen)
+                                                 i32 programIndex, wchar_t *out,
+                                                 i32 outLen)
 {
-	// +1 for null terminator
-	const char additionalCharsToAdd[] = {' ', '-', ' '};
-	i32 friendlyNameLen = program->titleLen + program->exeLen +
-	                      DQN_ARRAY_COUNT(additionalCharsToAdd) + 1;
 
-	DQN_ASSERT(outLen >= friendlyNameLen);
+	// Friendly Name Format
+	// <Index>: <Program Title> - <Program Exe>
 
-	i32 numStored = _snwprintf_s(out, outLen, outLen, L"%s - %s",
-	                             program->title, program->exe);
+	// For example
+	// 1: Google Search - firefox.exe
+	// 2: Winjump.cpp + (C:\winjump.cpp) - GVIM64 - firefox.exe
+	i32 numStored =
+	    _snwprintf_s(out, outLen, outLen, L"%2d: %s - %s", programIndex + 1,
+	                 program->title, program->exe);
+	DQN_ASSERT(numStored < FRIENDLY_NAME_LEN);
 
 	return numStored;
 }
@@ -402,6 +444,113 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 	return result;
 }
 
+enum Win32Menu
+{
+	win32menu_file_exit,
+	win32menu_options_font,
+	win32menu_count,
+};
+
+FILE_SCOPE void win32_menu_create(HWND window)
+{
+	HMENU menuBar  = CreateMenu();
+	{ // File Menu
+		HMENU menu = CreatePopupMenu();
+		AppendMenuW(menuBar, MF_STRING | MF_POPUP, (UINT)menu, L"File");
+		AppendMenuW(menu, MF_STRING, win32menu_file_exit, L"Exit");
+	}
+
+	{ // Options Menu
+		HMENU menu = CreatePopupMenu();
+		AppendMenuW(menuBar, MF_STRING | MF_POPUP, (UINT)menu, L"Options");
+		AppendMenuW(menu, MF_STRING, win32menu_options_font, L"Font");
+	}
+
+	SetMenu(window, menuBar);
+}
+
+FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
+{
+	if (font)
+	{
+		DeleteObject(state->font);
+		state->font = font;
+
+		bool redrawImmediately = false;
+		for (i32 i = 0; i < winjumpwindow_count; i++)
+		{
+			HWND targetWindow = globalState.window[i];
+			SendMessage(targetWindow, WM_SETFONT, (WPARAM)font,
+			            redrawImmediately);
+		}
+	}
+	else
+	{
+		DQN_WIN32_ERROR_BOX("winjump_font_change() failed: Font was NULL.",
+		                    NULL);
+	}
+}
+
+// NOTE: Resizing the search box will readjust elements dependent on its size
+FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
+                                          i32 newWidth,
+                                          i32 newHeight,
+                                          const bool ignoreWidth,
+                                          const bool ignoreHeight)
+{
+	const i32 MARGIN = 5;
+	HWND editWindow  = globalState.window[winjumpwindow_input_search_entries];
+
+	LONG origWidth, origHeight;
+	dqn_win32_get_client_dim(editWindow, &origWidth, &origHeight);
+	if (ignoreWidth)  newWidth  = origWidth;
+	if (ignoreHeight) newHeight = origHeight;
+
+	// Resize the edit box that is used for filtering
+	DqnV2 editP = dqn_v2i(MARGIN, MARGIN);
+	MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, newWidth, newHeight,
+	           TRUE);
+
+	// Resize the list window
+	{
+		LONG statusBarHeight;
+		dqn_win32_get_client_dim(globalState.window[winjumpwindow_status_bar],
+		                         NULL, &statusBarHeight);
+
+		LONG clientWidth, clientHeight;
+		dqn_win32_get_client_dim(globalState.window[winjumpwindow_main_client],
+		                         &clientWidth, &clientHeight);
+
+		HWND listWindow = state->window[winjumpwindow_list_program_entries];
+		DqnV2 listP     = dqn_v2(editP.x, (editP.y + newHeight + MARGIN));
+		i32 listWidth   = newWidth;
+		i32 listHeight  = clientHeight - (i32)listP.y - statusBarHeight;
+
+		MoveWindow(listWindow, (i32)listP.x, (i32)listP.y, listWidth,
+		           listHeight, TRUE);
+	}
+}
+
+#define WINJUMP_STRING_TO_CALC_HEIGHT "H"
+FILE_SCOPE void win32_font_calculate_dim(HDC deviceContext, HFONT font,
+                                         char *string, LONG *width,
+                                         LONG *height)
+{
+	if (!string) return;
+
+	// NOTE: For some reason, even after sending WM_SETFONT to all Winjump
+	// windows, using the DC to draw a text doesn't reflect the new font. We
+	// track the current font, so just use that to calculate the search-size
+	SelectObject(deviceContext, font);
+	RECT rect = {};
+
+	// Draw text non-visibly, output dimensions to rect
+	DrawText(deviceContext, string, -1, &rect, DT_CALCRECT);
+
+	if (width)  *width  = rect.right  - rect.left;
+	if (height) *height = rect.bottom - rect.top;
+}
+
 FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
                                                 WPARAM wParam, LPARAM lParam)
 {
@@ -410,9 +559,12 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 	{
 		case WM_CREATE:
 		{
+			win32_menu_create(window);
+			globalState.defaultWindowProc                 = win32_main_callback;
+			globalState.window[winjumpwindow_main_client] = window;
+
 			// NOTE(doyle): Don't set position here, since creation sends
 			// a WM_SIZE, we just put all the size and position logic in there.
-
 			////////////////////////////////////////////////////////////////////
 			// Create Edit Window
 			////////////////////////////////////////////////////////////////////
@@ -426,7 +578,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  0,
 			  0,
 			  window,
-			  (HMENU)win32resource_edit_text_buffer,
+			  NULL,
 			  NULL,
 			  NULL
 			);
@@ -450,14 +602,14 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  0, // width
 			  0, // height
 			  window,
-			  (HMENU)win32resource_list,
+			  NULL,
 			  NULL,
 			  NULL
 			);
 			globalState.defaultWindowProcListBox = (WNDPROC)SetWindowLongPtrW(
 			    listWindow, GWLP_WNDPROC,
 			    (LONG_PTR)win32_list_box_callback);
-			globalState.window[winjumpwindow_list_window_entries] = listWindow;
+			globalState.window[winjumpwindow_list_program_entries] = listWindow;
 
 			////////////////////////////////////////////////////////////////////
 			// Create Status Bar
@@ -470,35 +622,33 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			    SBARS_SIZEGRIP |           // includes a sizing grip
 			        WS_CHILD | WS_VISIBLE, // creates a visible child window
 			    0,
-			    0, 0, 0,                         // ignores size and position
-			    window,                          // parent
-			    (HMENU)win32resource_status_bar, // child window identifier
-			    NULL, // handle to application instance
+			    0, 0, 0, // ignores size and position
+			    window,  // parent
+			    NULL,    // child window identifier
+			    NULL,    // handle to application instance
 			    NULL);
 			globalState.window[winjumpwindow_status_bar] = statusWindow;
 
 			////////////////////////////////////////////////////////////////////
 			// Use Default Font
 			////////////////////////////////////////////////////////////////////
-			{
-				bool redrawImmediately = true;
-				HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-				for (i32 i = 0; i < winjumpwindow_count; i++)
-				{
-					HWND targetWindow = globalState.window[i];
-					SendMessage(targetWindow, WM_SETFONT, (WPARAM)font,
-					            redrawImmediately);
-				}
-			}
+			HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+			winjump_font_change(&globalState, font);
 		}
 		break;
 
 		case WM_COMMAND:
 		{
-			WORD notificationCode = HIWORD((DWORD)wParam);
-			HWND handle           = (HWND)lParam;
-			if (handle == globalState.window[win32resource_list])
+
+			// If command from control then,
+			// HIWORD(wParam) = ControlNotification
+			// LOWORD(wParam) = ControlID
+			// lParam         = Control Handle
+			HWND handle = (HWND)lParam;
+			if (handle ==
+			    globalState.window[winjumpwindow_list_program_entries])
 			{
+				WORD notificationCode = HIWORD((DWORD)wParam);
 				if (notificationCode == LBN_SELCHANGE)
 				{
 					LRESULT selectedIndex =
@@ -519,6 +669,74 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 						SendMessageW(handle, LB_SETCURSEL, (WPARAM)-1, 0);
 						win32_display_window(showProgram.window);
 					}
+				}
+				break;
+			}
+
+			// If command from a menu item,
+			// HIWORD(wParam) = 0
+			// LOWORD(wParam) = MenuID
+			// lParam         = 0
+			if ((HIWORD(wParam) == 0 && lParam == 0) &&
+			    (LOWORD(wParam) >= 0 && LOWORD(wParam) < win32menu_count))
+			{
+				switch (LOWORD(wParam))
+				{
+					case win32menu_file_exit:
+					{
+						globalRunning = false;
+					}
+					break;
+
+					case win32menu_options_font:
+					{
+						LOGFONTW chosenFont = {};
+						GetObjectW(globalState.font, sizeof(chosenFont),
+						          &chosenFont);
+
+						CHOOSEFONTW chooseFont = {};
+						chooseFont.lStructSize = sizeof(chooseFont);
+						chooseFont.hwndOwner   = window;
+						chooseFont.lpLogFont   = &chosenFont;
+						chooseFont.Flags =
+						    CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT;
+
+						if (ChooseFontW(&chooseFont))
+						{
+							HFONT font = CreateFontIndirectW(&chosenFont);
+							if (font)
+							{
+								winjump_font_change(&globalState, font);
+								HWND editWindow =
+								    globalState.window
+								        [winjumpwindow_input_search_entries];
+								HDC deviceContext = GetDC(editWindow);
+
+								LONG newHeight;
+								win32_font_calculate_dim(
+								    deviceContext, globalState.font,
+								    WINJUMP_STRING_TO_CALC_HEIGHT, NULL,
+								    &newHeight);
+								ReleaseDC(editWindow, deviceContext);
+
+								newHeight = (LONG)(newHeight * 1.5f);
+								winjump_resize_search_box(
+								    &globalState, 0, newHeight, true, false);
+							}
+							else
+							{
+								DQN_WIN32_ERROR_BOX(
+								    "CreateFontIndirectW() failed", NULL);
+							}
+						}
+					}
+					break;
+
+					default:
+					{
+						// Do nothing
+					}
+					break;
 				}
 			}
 		}
@@ -541,16 +759,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 		case WM_SIZE:
 		{
-			RECT clientRect;
-			GetClientRect(window, &clientRect);
-			LONG clientWidth  = clientRect.right;
-			LONG clientHeight = clientRect.bottom;
-			const i32 margin  = 5;
+			LONG clientWidth, clientHeight;
+			dqn_win32_get_client_dim(window, &clientWidth, &clientHeight);
 
-			RECT statusBarRect;
-			GetClientRect(globalState.window[winjumpwindow_status_bar],
-			              &statusBarRect);
-			LONG statusBarHeight = statusBarRect.bottom;
 			////////////////////////////////////////////////////////////////////
 			// Re-configure Status Bar on Resize
 			////////////////////////////////////////////////////////////////////
@@ -571,29 +782,27 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			}
 
 			////////////////////////////////////////////////////////////////////
-			// Position Edit Box and List Box
+			// Adjust the search box and entry list
 			////////////////////////////////////////////////////////////////////
 			{
-				// Resize the edit box that is used for filtering
 				HWND editWindow =
 				    globalState.window[winjumpwindow_input_search_entries];
 
-				DqnV2 editP    = dqn_v2i(margin, margin);
-				i32 editWidth  = clientWidth - (2 * margin);
-				i32 editHeight = 25;
+				const i32 MARGIN = 5;
+				LONG searchHeight, searchWidth = clientWidth - (2 * MARGIN);
 
-				MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, editWidth,
-				           editHeight, TRUE);
+				HDC deviceContext = GetDC(editWindow);
+				win32_font_calculate_dim(deviceContext, globalState.font,
+				                         WINJUMP_STRING_TO_CALC_HEIGHT, NULL,
+				                         &searchHeight);
+				searchHeight = (LONG)(searchHeight * 1.85f);
 
-				// Resize the list window
-				HWND listWindow =
-				    globalState.window[winjumpwindow_list_window_entries];
-				DqnV2 listP = dqn_v2(editP.x, (editP.y + editHeight + margin));
-				i32 listWidth  = editWidth;
-				i32 listHeight = clientHeight - (i32)listP.y - statusBarHeight;
+				ReleaseDC(editWindow, deviceContext);
 
-				MoveWindow(listWindow, (i32)listP.x, (i32)listP.y, listWidth,
-				           listHeight, TRUE);
+				// NOTE: This also re-positions the list because it depends on
+				// the search box position
+				winjump_resize_search_box(&globalState, searchWidth,
+				                          searchHeight, false, false);
 			}
 
 			result = DefWindowProcW(window, msg, wParam, lParam);
@@ -614,7 +823,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 void winjump_update()
 {
 	DqnArray<Win32Program> *programArray = &globalState.programArray;
-	HWND listBox = globalState.window[winjumpwindow_list_window_entries];
+	HWND listBox = globalState.window[winjumpwindow_list_program_entries];
 	i32 firstVisibleIndex = SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
 
 	DQN_ASSERT(dqn_darray_clear(programArray));
@@ -638,23 +847,32 @@ void winjump_update()
 			globalState.currentlyFiltering = true;
 			DQN_ASSERT(searchStringLen < WIN32_MAX_PROGRAM_TITLE);
 
-			u64 programArraySize = programArray->count;
-			for (i32 i = 0; i < programArraySize; i++)
+			i32 userSpecifiedIndex = -1;
+			for (i32 j = 0; j < searchStringLen && searchString[j]; j++)
 			{
-				Win32Program *program = &programArray->data[i];
-				const i32 friendlyNameLen = DQN_ARRAY_COUNT(program->title) +
-				                            DQN_ARRAY_COUNT(program->exe) + 4;
-				wchar_t friendlyName[friendlyNameLen] = {};
-				winjump_get_program_friendly_name(program, friendlyName,
-				                                  friendlyNameLen);
+				if (wchar_is_digit(searchString[j]))
+				{
+					userSpecifiedIndex =
+					    wchar_str_to_i32(&searchString[j], searchStringLen - j);
+					break;
+				}
+			}
+
+			u64 programArraySize = programArray->count;
+			for (i32 index = 0; index < programArraySize; index++)
+			{
+				Win32Program *program = &programArray->data[index];
+				wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
+				winjump_get_program_friendly_name(
+				    program, index, friendlyName,
+				    DQN_ARRAY_COUNT(friendlyName));
 
 				wchar_t *searchPtr = searchString;
 				if (!wchar_has_substring(searchString, searchStringLen,
-				                         friendlyName, friendlyNameLen))
+				                         friendlyName, FRIENDLY_NAME_LEN))
 				{
 					// If search string doesn't match, delete it from display
-					DQN_ASSERT(dqn_darray_remove_stable(programArray, i--));
-
+					DQN_ASSERT(dqn_darray_remove_stable(programArray, index--));
 					// Update index so we continue iterating over the correct
 					// elements after removing it from the list since the for
 					// loop is post increment and we're removing elements from
@@ -675,21 +893,14 @@ void winjump_update()
 		for (LRESULT index = 0;
 		     (index < listSize) && (index < programArraySize); index++)
 		{
-			Win32Program *currProgram = &programArray->data[index];
+			Win32Program *program = &programArray->data[index];
 
 			// TODO(doyle): Tighten memory alloc using len vars in program
-			// TODO(doyle): snprintf?
+			wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
+			winjump_get_program_friendly_name(program, index, friendlyName,
+			                                  DQN_ARRAY_COUNT(friendlyName));
 
-			// IMPORTANT: We set item data for the entry, so the entry
-			// must exist before we check PID. We create this entry when
-			// we check the string to see if it exists as the index.
-			// NOTE: +4 for the " - " and the null terminator
-			const i32 len = DQN_ARRAY_COUNT(currProgram->title) +
-			                DQN_ARRAY_COUNT(currProgram->exe) + 4;
-			wchar_t friendlyName[len] = {};
-			winjump_get_program_friendly_name(currProgram, friendlyName, len);
-
-			wchar_t entry[len] = {};
+			wchar_t entry[FRIENDLY_NAME_LEN] = {};
 			LRESULT entryLen =
 			    SendMessageW(listBox, LB_GETTEXT, index, (LPARAM)entry);
 			if (wstrcmp(friendlyName, entry) != 0)
@@ -704,10 +915,10 @@ void winjump_update()
 			// Compare list entry item data, pid
 			LRESULT entryPid =
 			    SendMessageW(listBox, LB_GETITEMDATA, index, 0);
-			if (currProgram->pid != (DWORD)entryPid)
+			if (program->pid != (DWORD)entryPid)
 			{
 				LRESULT result = SendMessageW(listBox, LB_SETITEMDATA, index,
-				                              currProgram->pid);
+				                              program->pid);
 			}
 		}
 
@@ -717,10 +928,9 @@ void winjump_update()
 			for (i32 i = listSize; i < programArraySize; i++)
 			{
 				Win32Program *program = &programArray->data[i];
-				const i32 len         = DQN_ARRAY_COUNT(program->title) +
-				                DQN_ARRAY_COUNT(program->exe) + 4;
-				wchar_t friendlyName[len] = {};
-				winjump_get_program_friendly_name(program, friendlyName, len);
+				wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
+				winjump_get_program_friendly_name(
+				    program, i, friendlyName, DQN_ARRAY_COUNT(friendlyName));
 
 				LRESULT insertIndex = SendMessageW(listBox, LB_ADDSTRING, 0,
 				                                   (LPARAM)friendlyName);
@@ -810,7 +1020,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	r.bottom = 200;
 
 	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
-	AdjustWindowRect(&r, windowStyle, FALSE);
+	AdjustWindowRect(&r, windowStyle, true);
 
 	globalRunning           = true;
 	HWND mainWindow         = CreateWindowExW(
@@ -831,9 +1041,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		                    NULL);
 		return -1;
 	}
-
-	globalState.defaultWindowProc = win32_main_callback;
-	globalState.window[winjumpwindow_main_client] = mainWindow;
 
 #define GUID_HOTKEY_ACTIVATE_APP 10983
 	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');

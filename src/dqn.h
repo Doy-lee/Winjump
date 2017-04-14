@@ -65,7 +65,7 @@ struct DqnArray
 };
 
 template <typename T>
-bool  dqn_darray_init (DqnArray<T> *array, size_t capacity);
+bool dqn_darray_init(DqnArray<T> *array, size_t capacity);
 template <typename T>
 bool  dqn_darray_grow (DqnArray<T> *array);
 template <typename T>
@@ -220,8 +220,11 @@ DQN_FILE_SCOPE u32 dqn_utf8_to_ucs(u32 *dest, u32 character);
 ////////////////////////////////////////////////////////////////////////////////
 // Win32 Specific
 ////////////////////////////////////////////////////////////////////////////////
+#ifdef DQN_WIN32
 DQN_FILE_SCOPE bool dqn_win32_utf8_to_wchar(char *in, wchar_t *out, i32 outLen);
 DQN_FILE_SCOPE bool dqn_win32_wchar_to_utf8(wchar_t *in, char *out, i32 outLen);
+DQN_FILE_SCOPE void dqn_win32_get_client_dim(HWND window, i32 width, i32 height);
+#endif /* DQN_WIN32 */
 
 ////////////////////////////////////////////////////////////////////////////////
 // File Operations
@@ -1265,6 +1268,16 @@ DQN_FILE_SCOPE bool dqn_win32_wchar_to_utf8(wchar_t *in, char *out, i32 outLen)
 	}
 
 	return true;
+}
+
+DQN_FILE_SCOPE void dqn_win32_get_client_dim(const HWND window,
+                                             LONG *const width,
+                                             LONG *const height)
+{
+	RECT rect;
+	GetClientRect(window, &rect);
+	if (width)  *width  = rect.right - rect.left;
+	if (height) *height = rect.bottom - rect.top;
 }
 #endif
 
