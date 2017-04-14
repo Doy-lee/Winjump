@@ -985,7 +985,7 @@ FILE_SCOPE void winjump_unit_test_local_functions()
 
 // Returns NULL if property not found, or if arguments are invalid
 FILE_SCOPE const char *
-winjump_ini_load_property_value_string(dqn_ini_t *ini,
+winjump_ini_load_property_value_string(DqnIni *ini,
                                        const char *const property)
 {
 	if (!ini || !property) return NULL;
@@ -1013,7 +1013,7 @@ winjump_ini_load_property_value_string(dqn_ini_t *ini,
 }
 
 // If value is unable to be found, value remains unchanged
-FILE_SCOPE bool winjump_ini_load_property_value_int(dqn_ini_t *ini,
+FILE_SCOPE bool winjump_ini_load_property_value_int(DqnIni *ini,
                                                     const char *const property,
                                                     i32 *value)
 {
@@ -1066,7 +1066,7 @@ FILE_SCOPE void winjump_read_config(WinjumpState *state)
 	// Read data to intermediate format
 	dqn_file_read(config, data, (u32)config.size);
 	dqn_file_close(&config);
-	dqn_ini_t *ini = dqn_ini_load((char *)data, NULL);
+	DqnIni *ini = dqn_ini_load((char *)data, NULL);
 	free(data);
 
 	// Start parsing to recreate font from config file
@@ -1128,7 +1128,7 @@ FILE_SCOPE void winjump_read_config(WinjumpState *state)
 	winjump_font_change(state, font);
 }
 
-FILE_SCOPE bool winjump_config_write_to_ini_string(dqn_ini_t *ini,
+FILE_SCOPE bool winjump_config_write_to_ini_string(DqnIni *ini,
                                                    const char *const property,
                                                    const char *const value)
 {
@@ -1150,7 +1150,7 @@ FILE_SCOPE bool winjump_config_write_to_ini_string(dqn_ini_t *ini,
 }
 
 
-FILE_SCOPE bool winjump_config_write_to_ini_int(dqn_ini_t *ini,
+FILE_SCOPE bool winjump_config_write_to_ini_int(DqnIni *ini,
                                                 const char *const property,
                                                 i32 value)
 {
@@ -1385,7 +1385,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		////////////////////////////////////////////////////////////////////////
 		// Create INI intermedia representation
 		////////////////////////////////////////////////////////////////////////
-		dqn_ini_t *ini = NULL;
+		DqnIni *ini = NULL;
 		if (config.size == 0)
 		{
 			// TODO(doyle): We have created an abstraction above the INI layer
