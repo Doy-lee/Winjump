@@ -470,26 +470,23 @@ FILE_SCOPE void win32_menu_create(HWND window)
 	SetMenu(window, menuBar);
 }
 
-FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
+FILE_SCOPE void win32_font_calculate_dim(HDC deviceContext, HFONT font,
+                                         char *string, LONG *width,
+                                         LONG *height)
 {
-	if (font)
-	{
-		DeleteObject(state->font);
-		state->font = font;
+	if (!string) return;
 
-		bool redrawImmediately = false;
-		for (i32 i = 0; i < winjumpwindow_count; i++)
-		{
-			HWND targetWindow = globalState.window[i];
-			SendMessage(targetWindow, WM_SETFONT, (WPARAM)font,
-			            redrawImmediately);
-		}
-	}
-	else
-	{
-		DQN_WIN32_ERROR_BOX("winjump_font_change() failed: Font was NULL.",
-		                    NULL);
-	}
+	// NOTE: For some reason, even after sending WM_SETFONT to all Winjump
+	// windows, using the DC to draw a text doesn't reflect the new font. We
+	// track the current font, so just use that to calculate the search-size
+	SelectObject(deviceContext, font);
+	RECT rect = {};
+
+	// Draw text non-visibly, output dimensions to rect
+	DrawText(deviceContext, string, -1, &rect, DT_CALCRECT);
+
+	if (width)  *width  = rect.right  - rect.left;
+	if (height) *height = rect.bottom - rect.top;
 }
 
 // NOTE: Resizing the search box will readjust elements dependent on its size
@@ -533,23 +530,39 @@ FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
 }
 
 #define WINJUMP_STRING_TO_CALC_HEIGHT "H"
-FILE_SCOPE void win32_font_calculate_dim(HDC deviceContext, HFONT font,
-                                         char *string, LONG *width,
-                                         LONG *height)
+FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 {
-	if (!string) return;
+	if (font)
+	{
+		DeleteObject(state->font);
+		state->font = font;
 
-	// NOTE: For some reason, even after sending WM_SETFONT to all Winjump
-	// windows, using the DC to draw a text doesn't reflect the new font. We
-	// track the current font, so just use that to calculate the search-size
-	SelectObject(deviceContext, font);
-	RECT rect = {};
+		bool redrawImmediately = false;
+		for (i32 i = 0; i < winjumpwindow_count; i++)
+		{
+			HWND targetWindow = globalState.window[i];
+			SendMessage(targetWindow, WM_SETFONT, (WPARAM)font,
+			            redrawImmediately);
+		}
 
-	// Draw text non-visibly, output dimensions to rect
-	DrawText(deviceContext, string, -1, &rect, DT_CALCRECT);
+		HWND editWindow =
+		    globalState.window[winjumpwindow_input_search_entries];
+		HDC deviceContext = GetDC(editWindow);
 
-	if (width)  *width  = rect.right  - rect.left;
-	if (height) *height = rect.bottom - rect.top;
+		LONG newHeight;
+		win32_font_calculate_dim(deviceContext, globalState.font,
+		                         WINJUMP_STRING_TO_CALC_HEIGHT, NULL,
+		                         &newHeight);
+		ReleaseDC(editWindow, deviceContext);
+
+		newHeight = (LONG)(newHeight * 1.5f);
+		winjump_resize_search_box(&globalState, 0, newHeight, true, false);
+	}
+	else
+	{
+		DQN_WIN32_ERROR_BOX("winjump_font_change() failed: Font was NULL.",
+		                    NULL);
+	}
 }
 
 FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
@@ -708,21 +721,6 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 							if (font)
 							{
 								winjump_font_change(&globalState, font);
-								HWND editWindow =
-								    globalState.window
-								        [winjumpwindow_input_search_entries];
-								HDC deviceContext = GetDC(editWindow);
-
-								LONG newHeight;
-								win32_font_calculate_dim(
-								    deviceContext, globalState.font,
-								    WINJUMP_STRING_TO_CALC_HEIGHT, NULL,
-								    &newHeight);
-								ReleaseDC(editWindow, deviceContext);
-
-								newHeight = (LONG)(newHeight * 1.5f);
-								winjump_resize_search_box(
-								    &globalState, 0, newHeight, true, false);
 								globalState.configIsStale = true;
 							}
 							else
@@ -999,7 +997,7 @@ winjump_ini_load_property_value_string(dqn_ini_t *ini,
 	{
 		char errorMsg[256] = {};
 
-		i32 numWritten = stbsp_sprintf(
+		i32 numWritten = dqn_sprintf(
 		    errorMsg,
 		    "dqn_ini_find_property() failed: Could not find '%s' property",
 		    property);
@@ -1272,8 +1270,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			{
 				WPARAM partToDisplayAt = 2;
 				char text[32]          = {};
-				stbsp_sprintf(text, "Active Windows: %d",
-				              globalState.programArray.count);
+				dqn_sprintf(text, "Active Windows: %d",
+				            globalState.programArray.count);
 				SendMessage(status, SB_SETTEXT, partToDisplayAt, (LPARAM)text);
 			}
 
@@ -1285,7 +1283,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				{
 					WPARAM partToDisplayAt = 1;
 					char text[32]          = {};
-					stbsp_sprintf(text, "Memory: %'dkb",
+					dqn_sprintf(text, "Memory: %'dkb",
 					              (u32)(memCounter.PagefileUsage / 1024.0f));
 					SendMessage(status, SB_SETTEXT, partToDisplayAt,
 					            (LPARAM)text);
@@ -1312,7 +1310,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		{
 			WPARAM partToDisplayAt = 0;
 			char text[32]          = {};
-			stbsp_sprintf(text, "MsPerFrame: %.2f", (f32)frameTimeInMs);
+			dqn_sprintf(text, "MsPerFrame: %.2f", (f32)frameTimeInMs);
 			SendMessage(status, SB_SETTEXT, partToDisplayAt, (LPARAM)text);
 		}
 	}
