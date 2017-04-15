@@ -34,20 +34,38 @@ REM wd4100 ignore: unused argument parameters
 REM wd4201 ignore: nonstandard extension used: nameless struct/union
 REM wd4189 ignore: local variable is initialised but not referenced
 REM wd4505 ignore: unreferenced local function not used will be removed
+REM Od disables optimisations
+
+set buildUnity=928
+set buildNormal=283
+
+set compileMode=%buildUnity%
+
+if %compileMode% == %buildUnity%  goto unity_build_flags
+if %compileMode% == %buildNormal% goto normal_build_flags
+
+:unity_build_flags
+	set defines=-D "WINJUMP_UNITY_BUILD"
+	set compileFiles= ..\src\UnityBuild\UnityBuild.cpp
+	goto compile
+
+:normal_build_flags
+	set compileFiles= ..\src\*.cpp
+
+:compile
 
 set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100 -wd4201 -wd4189 -wd4505 -Od
-
 REM Include directories
 set includeFlags=
 
 REM Link libraries
 set linkLibraries=user32.lib gdi32.lib shlwapi.lib Comctl32.lib Comdlg32.lib
 
-REM incrmenetal:no, turn incremental builds off
-REM opt:ref, try to remove functions from libs that are referenced at all
+REM incremental:no, turn incremental builds off
+REM opt:ref,        try to remove functions from libs that are not referenced at all
 set linkFlags=-incremental:no -opt:ref
 
-cl %compileFlags% ..\src\winjump.cpp %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /nologo /OUT:"winjump.exe"
+cl %compileFlags% %defines% %compileFiles% %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /nologo /OUT:"winjump.exe"
 
 popd
 

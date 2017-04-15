@@ -1,24 +1,18 @@
-#define DQN_IMPLEMENTATION // Enable the implementation
-#define DQN_MAKE_STATIC    // Make all functions be static
-#include "dqn.h"
+#include "Winjump.h"
 
-#ifndef VC_EXTRALEAN
-  #define VC_EXTRALEAN
-#endif
+#include "Config.h"
 
-#ifndef WIN32_LEAN_AND_MEAN
-  #define WIN32_LEAN_AND_MEAN
-#endif
-
-#include <Windows.h>
+#include <Commdlg.h>
+#include <Psapi.h>    // For win32 GetProcessMemoryInfo()
+#include <Shlwapi.h>  // For MSVC snwsprintf
 #include <Windowsx.h>
-#include <Shlwapi.h>
-#include <commctrl.h>
-
-// For win32 GetProcessMemoryInfo()
-#include <Psapi.h>
-
+#include <commctrl.h> // For win32 choose font dialog
 #include <stdio.h>
+
+#ifndef WINJUMP_UNITY_BUILD
+	#define DQN_IMPLEMENTATION
+	#include "dqn.h"
+#endif
 
 // TODO(doyle): Safer subclassing?
 // https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
@@ -29,6 +23,10 @@
 // TODO(doyle): Stop screen flickering by having better listbox updating
 // mechanisms
 // TODO(doyle): Clean up this cesspool.
+
+#define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
+FILE_SCOPE WinjumpState globalState;
+FILE_SCOPE bool         globalRunning;
 
 // Returns length without null terminator, returns 0 if NULL
 FILE_SCOPE i32 wstrlen(const wchar_t *const a)
@@ -179,46 +177,6 @@ FILE_SCOPE i32 wchar_str_to_i32(const wchar_t *const buf, const i32 bufSize)
 }
 
 
-typedef struct Win32Program
-{
-	wchar_t title[256];
-	i32     titleLen;
-
-	wchar_t exe[256];
-	i32     exeLen;
-
-	HWND    window;
-	DWORD   pid;
-
-	i32 lastStableIndex;
-} Win32Program;
-
-enum WinjumpWindows
-{
-	winjumpwindow_main_client,
-	winjumpwindow_list_program_entries,
-	winjumpwindow_input_search_entries,
-	winjumpwindow_status_bar,
-	winjumpwindow_count,
-};
-
-typedef struct WinjumpState
-{
-	HFONT   font;
-	HWND    window[winjumpwindow_count];
-	WNDPROC defaultWindowProc;
-	WNDPROC defaultWindowProcEditBox;
-	WNDPROC defaultWindowProcListBox;
-
-	DqnArray<Win32Program> programArray;
-	bool                   currentlyFiltering;
-	bool                   configIsStale;
-} WinjumpState;
-
-#define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
-FILE_SCOPE WinjumpState globalState;
-FILE_SCOPE bool         globalRunning;
-
 FILE_SCOPE void win32_display_window(HWND window)
 {
 	// IsIconic == if window is minimised
@@ -229,7 +187,6 @@ FILE_SCOPE void win32_display_window(HWND window)
 // Create the friendly name for representation in the list box
 // - out: The output buffer
 // - outLen: Length of the output buffer
-
 // Returns the number of characters stored into the buffer
 #define FRIENDLY_NAME_LEN 250
 FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
@@ -983,194 +940,6 @@ FILE_SCOPE void winjump_unit_test_local_functions()
 	}
 }
 
-// Returns NULL if property not found, or if arguments are invalid
-FILE_SCOPE const char *
-winjump_ini_load_property_value_string(DqnIni *ini,
-                                       const char *const property)
-{
-	if (!ini || !property) return NULL;
-
-	i32 index =
-	    dqn_ini_find_property(ini, DQN_INI_GLOBAL_SECTION, property, 0);
-
-	if (index == DQN_INI_NOT_FOUND)
-	{
-		char errorMsg[256] = {};
-
-		i32 numWritten = dqn_sprintf(
-		    errorMsg,
-		    "dqn_ini_find_property() failed: Could not find '%s' property",
-		    property);
-
-		DQN_ASSERT(numWritten != DQN_ARRAY_COUNT(errorMsg));
-		OutputDebugString(errorMsg);
-		return NULL;
-	}
-
-	const char *value =
-	    dqn_ini_property_value(ini, DQN_INI_GLOBAL_SECTION, index);
-	return value;
-}
-
-// If value is unable to be found, value remains unchanged
-FILE_SCOPE bool winjump_ini_load_property_value_int(DqnIni *ini,
-                                                    const char *const property,
-                                                    i32 *value)
-{
-	if (!ini || !property || !value) return false;
-
-	const char *propertyValue =
-	    winjump_ini_load_property_value_string(ini, property);
-	*value = dqn_str_to_i32(propertyValue, dqn_strlen(propertyValue));
-
-	return true;
-}
-
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_CONFIG_PATH               = "winjump.ini";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_NAME             = "FontName";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_WEIGHT           = "FontWeight";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_HEIGHT           = "FontHeight";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_ITALIC           = "FontItalic";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_PITCH_AND_FAMILY = "FontPitchAndFamily";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_CHAR_SET         = "FontCharSet";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_OUT_PRECISION    = "FontOutPrecision";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_CLIP_PRECISION   = "FontClipPrecision";
-FILE_SCOPE const char *const GLOBAL_WINJUMP_STRING_INI_FONT_QUALITY          = "FontQuality";
-
-FILE_SCOPE void winjump_read_config(WinjumpState *state)
-{
-	// Get a handle to config file
-	DqnFile config = {};
-
-	// If size is 0, also return .. it's an empty file.
-	if (!dqn_file_open(GLOBAL_WINJUMP_STRING_CONFIG_PATH, &config,
-	                   dqnfilepermissionflag_read,
-	                   dqnfileaction_open_only) || config.size == 0)
-	{
-		dqn_file_close(&config);
-		state->configIsStale = true;
-		return;
-	}
-
-	u8 *data = (u8 *)calloc(1, (size_t)config.size);
-
-	if (!data)
-	{
-		dqn_file_close(&config);
-		OutputDebugString(
-		    "calloc() failed: Not enough memory. Continuing without "
-		    "configuration file.");
-		return;
-	}
-
-	// Read data to intermediate format
-	dqn_file_read(config, data, (u32)config.size);
-	dqn_file_close(&config);
-	DqnIni *ini = dqn_ini_load((char *)data, NULL);
-	free(data);
-
-	// Start parsing to recreate font from config file
-	HFONT font = NULL;
-	{
-		// NOTE: If font name is not found, this will return NULL and CreateFont
-		// will just choose the best matching font fitting the criteria we've
-		// found.
-		const char *fontName = winjump_ini_load_property_value_string(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_NAME);
-
-		i32 fontHeight         = -11;
-		i32 fontWeight         = FW_DONTCARE;
-		i32 fontItalic         = 0;
-		i32 fontPitchAndFamily = DEFAULT_PITCH | (FF_DONTCARE << 3);
-		i32 fontCharSet        = 0;
-		i32 fontOutPrecision   = 0;
-		i32 fontClipPrecision  = 0;
-		i32 fontQuality        = 0;
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_HEIGHT, &fontHeight);
-		if (fontHeight > 0) fontHeight = -fontHeight;
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_WEIGHT, &fontWeight);
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_ITALIC, &fontItalic);
-		i32 isItalic = (fontItalic > 0) ? 255 : 0;
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_PITCH_AND_FAMILY,
-		    &fontPitchAndFamily);
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_CHAR_SET, &fontCharSet);
-		i32 isCharSet = (fontCharSet > 0) ? 255 : 0;
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_OUT_PRECISION,
-		    &fontOutPrecision);
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_CLIP_PRECISION,
-		    &fontClipPrecision);
-
-		winjump_ini_load_property_value_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_QUALITY, &fontQuality);
-
-		// Load font from configuration
-		font = CreateFont(fontHeight, 0, 0, 0, fontWeight, isItalic, 0, 0,
-		                  isCharSet, fontOutPrecision, fontClipPrecision,
-		                  fontQuality, fontPitchAndFamily, fontName);
-	}
-	dqn_ini_destroy(ini);
-
-	DQN_ASSERT(font);
-	winjump_font_change(state, font);
-}
-
-FILE_SCOPE bool winjump_config_write_to_ini_string(DqnIni *ini,
-                                                   const char *const property,
-                                                   const char *const value)
-{
-	if (!ini || !property || !value) return false;
-
-	i32 index = dqn_ini_find_property(ini, DQN_INI_GLOBAL_SECTION, property, 0);
-	if (index == DQN_INI_NOT_FOUND)
-	{
-		dqn_ini_property_add(ini, DQN_INI_GLOBAL_SECTION, property, 0,
-		                             value, 0);
-	}
-	else
-	{
-		dqn_ini_property_value_set(ini, DQN_INI_GLOBAL_SECTION, index, value,
-		                           0);
-	}
-
-	return true;
-}
-
-
-FILE_SCOPE bool winjump_config_write_to_ini_int(DqnIni *ini,
-                                                const char *const property,
-                                                i32 value)
-{
-	if (!ini || !property) return false;
-
-	i32 index = dqn_ini_find_property(ini, DQN_INI_GLOBAL_SECTION, property, 0);
-	char buf[DQN_I32_TO_STR_MAX_BUF_SIZE] = {};
-	dqn_i32_to_str(value, buf, DQN_ARRAY_COUNT(buf));
-	if (index == DQN_INI_NOT_FOUND)
-	{
-		dqn_ini_property_add(ini, DQN_INI_GLOBAL_SECTION, property, 0, buf, 0);
-	}
-	else
-	{
-		dqn_ini_property_value_set(ini, DQN_INI_GLOBAL_SECTION, index, buf, 0);
-	}
-
-	return true;
-}
-
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd)
 {
@@ -1239,7 +1008,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	////////////////////////////////////////////////////////////////////////////
 	// Read Configuration if Exist
 	////////////////////////////////////////////////////////////////////////////
-	winjump_read_config(&globalState);
+	HFONT fontDerivedFromConfig = config_read_from_disk(&globalState);
+	if (fontDerivedFromConfig)
+		winjump_font_change(&globalState, fontDerivedFromConfig);
 
 	////////////////////////////////////////////////////////////////////////////
 	// Update loop
@@ -1320,128 +1091,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	////////////////////////////////////////////////////////////////////////////
 	if (globalState.configIsStale)
 	{
-		////////////////////////////////////////////////////////////////////////
-		// Get the font data for the current configuration to write to disk
-		////////////////////////////////////////////////////////////////////////
-		LOGFONTW logFont = {};
-		GetObjectW(globalState.font, sizeof(logFont), &logFont);
-		// NOTE: The maximum number of bytes a utf-8 character can be is 4.
-		// Since we are using wchar_t with Windows, but utf-8 elsewhere, and in
-		// the ini code, we need to convert wchar safely to utf8 before storing.
-		i32 fontNameMaxLen    = LF_FACESIZE * 4;
-		char *fontName        = (char *)calloc(1, fontNameMaxLen);
-		bool fontNameNotValid = false;
-		if (!fontName)
-		{
-			OutputDebugString(
-			    "calloc() failed: Not enough memory, FontName will not be "
-			    "stored to config file");
-			fontNameNotValid = true;
-		}
-
-		if (!dqn_win32_wchar_to_utf8(logFont.lfFaceName, fontName,
-		                             fontNameMaxLen))
-		{
-			OutputDebugString(
-			    "dqn_win32_wchar_to_utf8() failed: FontName will not be stored "
-			    "to config file");
-			fontNameNotValid = true;
-		}
-
-		i32 fontHeight         = (i32)logFont.lfHeight;
-		i32 fontWeight         = (i32)logFont.lfWeight;
-		i32 fontItalic         = (logFont.lfItalic > 0) ? 1 : 0;
-		i32 fontPitchAndFamily = (i32)logFont.lfPitchAndFamily;
-		i32 fontCharSet        = (logFont.lfCharSet > 0) ? 1 : 0;
-		i32 fontOutPrecision   = logFont.lfOutPrecision;
-		i32 fontClipPrecision  = logFont.lfClipPrecision;
-		i32 fontQuality        = logFont.lfQuality;
-
-		////////////////////////////////////////////////////////////////////////
-		// Get handle to file and prepare for write
-		////////////////////////////////////////////////////////////////////////
-		DqnFile config = {};
-
-		// TODO(doyle): We should not clear a file until we know that the ini
-		// file can be created succesfully and written otherwise we lose state.
-		if (!dqn_file_open(
-		        GLOBAL_WINJUMP_STRING_CONFIG_PATH, &config,
-		        (dqnfilepermissionflag_read | dqnfilepermissionflag_write),
-		        dqnfileaction_clear_if_exist))
-		{
-			// Then file does not exist
-			if (!dqn_file_open(
-			        GLOBAL_WINJUMP_STRING_CONFIG_PATH, &config,
-			        (dqnfilepermissionflag_read | dqnfilepermissionflag_write),
-			        dqnfileaction_create_if_not_exist))
-			{
-				OutputDebugString(
-				    "dqn_file_open() failed: Platform was unable to create "
-				    "config file on disk");
-				return 0;
-			}
-		}
-
-		////////////////////////////////////////////////////////////////////////
-		// Create INI intermedia representation
-		////////////////////////////////////////////////////////////////////////
-		DqnIni *ini = NULL;
-		if (config.size == 0)
-		{
-			// TODO(doyle): We have created an abstraction above the INI layer
-			// which will automatically resolve whether or not the property
-			// exists in the INI file. But if the config size is 0, then we know
-			// that all these properties must be written. So there's a small
-			// overhead in this case where our abstraction will check to see if
-			// the property exists when it's unecessary.
-			ini = dqn_ini_create(NULL);
-		}
-		else
-		{
-			u8 *data = (u8 *)calloc(1, (size_t)config.size);
-			if (!data)
-			{
-				OutputDebugString(
-				    "calloc() failed: Not enough memory. Exiting without "
-				    "saving configuration file.");
-				return 0 ;
-			}
-		}
-		DQN_ASSERT(ini);
-
-		if (!fontNameNotValid)
-		{
-			winjump_config_write_to_ini_string(
-			    ini, GLOBAL_WINJUMP_STRING_INI_FONT_NAME, fontName);
-		}
-
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_HEIGHT, fontHeight);
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_WEIGHT, fontWeight);
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_ITALIC, fontItalic);
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_PITCH_AND_FAMILY,
-		    fontPitchAndFamily);
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_CHAR_SET, fontCharSet);
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_OUT_PRECISION,
-		    fontOutPrecision);
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_CLIP_PRECISION,
-		    fontClipPrecision);
-		winjump_config_write_to_ini_int(
-		    ini, GLOBAL_WINJUMP_STRING_INI_FONT_QUALITY, fontQuality);
-
-		////////////////////////////////////////////////////////////////////////
-		// Write ini to disk
-		////////////////////////////////////////////////////////////////////////
-		i32 requiredSize   = dqn_ini_save(ini, NULL, 0);
-		u8 *dataToWriteOut = (u8 *)calloc(1, requiredSize);
-		dqn_ini_save(ini, (char *)dataToWriteOut, requiredSize);
-		dqn_file_write(&config, dataToWriteOut, requiredSize, 0);
+		config_write_to_disk(&globalState);
 	}
 
 	return 0;

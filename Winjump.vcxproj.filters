@@ -13,7 +13,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\winjump.cpp">
+    <ClCompile Include="src\UnityBuild.cpp">
       <Filter>sources</Filter>
     </ClCompile>
   </ItemGroup>
