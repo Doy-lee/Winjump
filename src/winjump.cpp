@@ -1,13 +1,14 @@
 #include "Winjump.h"
 
-#include "Config.h"
-
 #include <Commdlg.h>
 #include <Psapi.h>    // For win32 GetProcessMemoryInfo()
 #include <Shlwapi.h>  // For MSVC snwsprintf
 #include <Windowsx.h>
 #include <commctrl.h> // For win32 choose font dialog
 #include <stdio.h>
+
+#include "Config.h"
+#include "Wchar.h"
 
 #ifndef WINJUMP_UNITY_BUILD
 	#define DQN_IMPLEMENTATION
@@ -17,214 +18,11 @@
 // TODO(doyle): Safer subclassing?
 // https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
 
-// TODO(doyle): Search by index in list to help drilldown after the initial search
-
 #define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 FILE_SCOPE WinjumpState globalState;
 FILE_SCOPE bool         globalRunning;
 
 // Returns length without null terminator, returns 0 if NULL
-FILE_SCOPE inline i32 wstrlen(const wchar_t *const a)
-{
-	i32 result = 0;
-	while (a && a[result]) result++;
-	return result;
-}
-
-FILE_SCOPE inline i32 wstrlen_delimit_with(const wchar_t *a, const wchar_t delimiter)
-{
-	i32 result = 0;
-	while (a && a[result] && a[result] != delimiter) result++;
-	return result;
-}
-
-FILE_SCOPE inline bool wchar_is_digit(const wchar_t c)
-{
-	if (c >= L'0' && c <= L'9') return true;
-	return false;
-}
-
-FILE_SCOPE inline i32 wstrcmp(const wchar_t *a, const wchar_t *b)
-{
-	if (!a && !b) return -1;
-	if (!a) return -1;
-	if (!b) return -1;
-
-	while ((*a) == (*b))
-	{
-		if (!(*a)) return 0;
-		a++;
-		b++;
-	}
-
-	return (((*a) < (*b)) ? -1 : 1);
-}
-
-FILE_SCOPE inline wchar_t wchar_to_lower(const wchar_t a)
-{
-	if (a >= L'A' && a <= L'Z')
-	{
-		i32 shiftOffset = L'a' - L'A';
-		return (a + (wchar_t)shiftOffset);
-	}
-
-	return a;
-}
-
-FILE_SCOPE bool wchar_has_substring(const wchar_t *const a, const i32 lenA,
-                                    const wchar_t *const b, const i32 lenB)
-{
-	if (!a || !b) return false;
-	if (lenA == 0 || lenB == 0) return false;
-
-	const wchar_t *longStr, *shortStr;
-	i32 longLen, shortLen;
-	if (lenA > lenB)
-	{
-		longStr  = a;
-		longLen  = lenA;
-
-		shortStr = b;
-		shortLen = lenB;
-	}
-	else
-	{
-		longStr  = b;
-		longLen  = lenB;
-
-		shortStr = a;
-		shortLen = lenA;
-	}
-
-	bool matchedSubstr = false;
-	for (i32 indexIntoLong = 0; indexIntoLong < longLen && !matchedSubstr;
-	     indexIntoLong++)
-	{
-		// NOTE: As we scan through, if the longer string we index into becomes
-		// shorter than the substring we're checking then the substring is not
-		// contained in the long string.
-		i32 remainingLenInLongStr = longLen - indexIntoLong;
-		if (remainingLenInLongStr < shortLen) break;
-
-		const wchar_t *longSubstr = &longStr[indexIntoLong];
-		i32 index = 0;
-		for (;;)
-		{
-			if (wchar_to_lower(longSubstr[index]) ==
-			    wchar_to_lower(shortStr[index]))
-			{
-				index++;
-				if (index >= shortLen || !shortStr[index])
-				{
-					matchedSubstr = true;
-					break;
-				}
-			}
-			else
-			{
-				break;
-			}
-		}
-	}
-
-	return matchedSubstr;
-}
-
-FILE_SCOPE inline void wchar_str_to_lower(wchar_t *const a, const i32 len)
-{
-	for (i32 i = 0; i < len; i++)
-		a[i]   = wchar_to_lower(a[i]);
-}
-
-DQN_FILE_SCOPE bool wchar_str_reverse(wchar_t *buf, const i32 bufSize)
-{
-	if (!buf) return false;
-	i32 mid = bufSize / 2;
-
-	for (i32 i = 0; i < mid; i++)
-	{
-		wchar_t tmp            = buf[i];
-		buf[i]                 = buf[(bufSize - 1) - i];
-		buf[(bufSize - 1) - i] = tmp;
-	}
-
-	return true;
-}
-
-DQN_FILE_SCOPE i32 wchar_i32_to_str(i32 value, wchar_t *buf, i32 bufSize)
-{
-	if (!buf || bufSize == 0) return 0;
-
-	if (value == 0)
-	{
-		buf[0] = L'0';
-		return 0;
-	}
-	
-	// NOTE(doyle): Max 32bit integer (+-)2147483647
-	i32 charIndex = 0;
-	bool negative           = false;
-	if (value < 0) negative = true;
-
-	if (negative) buf[charIndex++] = L'-';
-
-	i32 val = DQN_ABS(value);
-	while (val != 0 && charIndex < bufSize)
-	{
-		i32 rem          = val % 10;
-		buf[charIndex++] = (u8)rem + '0';
-		val /= 10;
-	}
-
-	// NOTE(doyle): If string is negative, we only want to reverse starting
-	// from the second character, so we don't put the negative sign at the end
-	if (negative)
-	{
-		wchar_str_reverse(buf + 1, charIndex - 1);
-	}
-	else
-	{
-		wchar_str_reverse(buf, charIndex);
-	}
-
-	return charIndex;
-}
-
-FILE_SCOPE i32 wchar_str_to_i32(const wchar_t *const buf, const i32 bufSize)
-{
-	if (!buf || bufSize == 0) return 0;
-
-	i32 index       = 0;
-	bool isNegative = false;
-	if (buf[index] == L'-' || buf[index] == L'+')
-	{
-		if (buf[index] == L'-') isNegative = true;
-		index++;
-	}
-	else if (!wchar_is_digit(buf[index]))
-	{
-		return 0;
-	}
-
-	i32 result = 0;
-	for (i32 i = index; i < bufSize; i++)
-	{
-		if (wchar_is_digit(buf[i]))
-		{
-			result *= 10;
-			result += (buf[i] - L'0');
-		}
-		else
-		{
-			break;
-		}
-	}
-
-	if (isNegative) result *= -1;
-
-	return result;
-}
-
 
 FILE_SCOPE void win32_display_window(HWND window)
 {
@@ -302,11 +100,11 @@ BOOL CALLBACK win32_enum_windows_callback(HWND window, LPARAM lParam)
 					DQN_ASSERT(len != DQN_ARRAY_COUNT(program.exe));
 
 					PathStripPathW(program.exe);
-					program.exeLen = wstrlen(program.exe);
+					program.exeLen = wchar_strlen(program.exe);
 					CloseHandle(handle);
 				}
 
-				Win32Program *result = dqn_darray_push(programArray, program);
+				Win32Program *result = dqn_array_push(programArray, program);
 				if (result) result->lastStableIndex = (i32)programArray->count - 1;
 				break;
 			}
@@ -415,13 +213,13 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 		}
 		break;
 
-		// NOTE: Stop Window Bell on pressing on Enter
 		case WM_CHAR:
 		{
 			switch (wParam)
 			{
 				case VK_RETURN:
 				{
+					// NOTE: Stop Window Bell on pressing on Enter
 					return 0;
 				}
 
@@ -444,8 +242,8 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 
 		default:
 		{
-			return CallWindowProcW(globalState.defaultWindowProcEditBox, editWindow,
-			                       msg, wParam, lParam);
+			return CallWindowProcW(globalState.defaultWindowProcEditBox,
+			                       editWindow, msg, wParam, lParam);
 		}
 	}
 
@@ -835,7 +633,7 @@ winjump_program_array_shallow_copy_array_internal(DqnArray<Win32Program> *src,
 	{
 		// NOTE: Once we take a snapshot, we stop enumerating windows, so we
 		// only need to allocate exactly array->count
-		if (dqn_darray_init(dest, (size_t)src->count))
+		if (dqn_array_init(dest, (size_t)src->count))
 		{
 			DQN_ASSERT(src->data && dest->data);
 			memcpy(dest->data, src->data, (size_t)src->count * sizeof(*src->data));
@@ -888,10 +686,10 @@ void winjump_update(WinjumpState *state)
 		{
 			DqnArray<Win32Program> *result =
 			    &state->programArraySnapshotStack.data[i];
-			dqn_darray_free(result);
+			dqn_array_free(result);
 		}
-		dqn_darray_clear(programArray);
-		dqn_darray_clear(&state->programArraySnapshotStack);
+		dqn_array_clear(programArray);
+		dqn_array_clear(&state->programArraySnapshotStack);
 
 		EnumWindows(win32_enum_windows_callback, (LPARAM)programArray);
 	}
@@ -915,7 +713,7 @@ void winjump_update(WinjumpState *state)
 				DqnArray<Win32Program> snapshot = {};
 				if (winjump_program_array_create_snapshot(state, &snapshot))
 				{
-					dqn_darray_push(&state->programArraySnapshotStack,
+					dqn_array_push(&state->programArraySnapshotStack,
 					                snapshot);
 				}
 				else
@@ -933,9 +731,9 @@ void winjump_update(WinjumpState *state)
 				if (state->programArraySnapshotStack.count > 0)
 				{
 					DqnArray<Win32Program> *snapshot =
-					    dqn_darray_pop(&state->programArraySnapshotStack);
+					    dqn_array_pop(&state->programArraySnapshotStack);
 					winjump_program_array_restore_snapshot(state, snapshot);
-					dqn_darray_free(snapshot);
+					dqn_array_free(snapshot);
 				}
 			}
 		}
@@ -1019,7 +817,7 @@ void winjump_update(WinjumpState *state)
 			                         FRIENDLY_NAME_LEN))
 			{
 				// If search string doesn't match, delete it from display
-				DQN_ASSERT(dqn_darray_remove_stable(programArray, index--));
+				DQN_ASSERT(dqn_array_remove_stable(programArray, index--));
 				// Update index so we continue iterating over the correct
 				// elements after removing it from the list since the for
 				// loop is post increment and we're removing elements from
@@ -1049,7 +847,7 @@ void winjump_update(WinjumpState *state)
 			wchar_t entry[FRIENDLY_NAME_LEN] = {};
 			LRESULT entryLen =
 			    SendMessageW(listBox, LB_GETTEXT, index, (LPARAM)entry);
-			if (wstrcmp(friendlyName, entry) != 0)
+			if (wchar_strcmp(friendlyName, entry) != 0)
 			{
 				LRESULT insertIndex = SendMessageW(listBox, LB_INSERTSTRING,
 				                                   index, (LPARAM)friendlyName);
@@ -1096,7 +894,7 @@ void winjump_update(WinjumpState *state)
 	}
 }
 
-FILE_SCOPE void winjump_unit_test_local_functions()
+FILE_SCOPE void debug_unit_test_local_functions()
 {
 	DQN_ASSERT(wchar_to_lower(L'A') == L'a');
 	DQN_ASSERT(wchar_to_lower(L'a') == L'a');
@@ -1105,13 +903,13 @@ FILE_SCOPE void winjump_unit_test_local_functions()
 	{
 		wchar_t *a = L"Microsoft";
 		wchar_t *b = L"icro";
-		i32 lenA   = wstrlen(a);
-		i32 lenB   = wstrlen(b);
+		i32 lenA   = wchar_strlen(a);
+		i32 lenB   = wchar_strlen(b);
 		DQN_ASSERT(wchar_has_substring(a, lenA, b, lenB) == true);
-		DQN_ASSERT(wchar_has_substring(a, lenA, L"iro", wstrlen(L"iro")) ==
+		DQN_ASSERT(wchar_has_substring(a, lenA, L"iro", wchar_strlen(L"iro")) ==
 		           false);
 		DQN_ASSERT(wchar_has_substring(b, lenB, a, lenA) == true);
-		DQN_ASSERT(wchar_has_substring(L"iro", wstrlen(L"iro"), a, lenA) ==
+		DQN_ASSERT(wchar_has_substring(L"iro", wchar_strlen(L"iro"), a, lenA) ==
 		           false);
 		DQN_ASSERT(wchar_has_substring(L"", 0, L"iro", 4) == false);
 		DQN_ASSERT(wchar_has_substring(L"", 0, L"", 0) == false);
@@ -1121,8 +919,8 @@ FILE_SCOPE void winjump_unit_test_local_functions()
 	{
 		wchar_t *a = L"Micro";
 		wchar_t *b = L"irob";
-		i32 lenA   = wstrlen(a);
-		i32 lenB   = wstrlen(b);
+		i32 lenA   = wchar_strlen(a);
+		i32 lenB   = wchar_strlen(b);
 		DQN_ASSERT(wchar_has_substring(a, lenA, b, lenB) == false);
 		DQN_ASSERT(wchar_has_substring(b, lenB, a, lenA) == false);
 	}
@@ -1183,16 +981,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		return -1;
 	}
 
-	if (!dqn_darray_init(&globalState.programArray, 4))
+	if (!dqn_array_init(&globalState.programArray, 4))
 	{
-		DQN_WIN32_ERROR_BOX("dqn_darray_init() failed: Not enough memory.",
+		DQN_WIN32_ERROR_BOX("dqn_array_init() failed: Not enough memory.",
 		                    NULL);
 		return -1;
 	}
 
-	if (!dqn_darray_init(&globalState.programArraySnapshotStack, 4))
+	if (!dqn_array_init(&globalState.programArraySnapshotStack, 4))
 	{
-		DQN_WIN32_ERROR_BOX("dqn_darray_init() failed: Not enough memory.",
+		DQN_WIN32_ERROR_BOX("dqn_array_init() failed: Not enough memory.",
 		                    NULL);
 		return -1;
 	}
@@ -1228,6 +1026,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		}
 
 		winjump_update(&globalState);
+
 		////////////////////////////////////////////////////////////////////////
 		// Update Status Bar
 		////////////////////////////////////////////////////////////////////////
@@ -1285,10 +1084,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	////////////////////////////////////////////////////////////////////////////
 	// Write Config to Disk
 	////////////////////////////////////////////////////////////////////////////
-	if (globalState.configIsStale)
-	{
-		config_write_to_disk(&globalState);
-	}
+	if (globalState.configIsStale) config_write_to_disk(&globalState);
 
 	return 0;
 }

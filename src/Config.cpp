@@ -1,5 +1,7 @@
 #include "Config.h"
 
+#include <stdlib.h>
+
 #include "Winjump.h"
 #include "dqn.h"
 
@@ -16,8 +18,7 @@ config_ini_load_property_value_string(DqnIni *ini, const char *const property)
 	{
 		char errorMsg[256] = {};
 
-		i32 numWritten = dqn_sprintf(
-		    errorMsg,
+		i32 numWritten = dqn_sprintf( errorMsg,
 		    "dqn_ini_find_property() failed: Could not find '%s' property",
 		    property);
 

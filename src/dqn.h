@@ -18,14 +18,13 @@
 // HEADER
 //
 ////////////////////////////////////////////////////////////////////////////////
-#include "stdint.h" // For standard types
-#include "math.h"   // For trigonometry functions (for now)
-#include "stdlib.h" // For calloc, malloc, free
+#include <stdint.h> // For standard types
 
 #ifdef _WIN32
 	#define DQN_WIN32_ERROR_BOX(text, title) MessageBoxA(NULL, text, title, MB_OK);
 	#define DQN_WIN32
 
+	// TODO(doyle): Make my own windows.h?
 	#define WIN32_LEAN_AND_MEAN
 	#include <Windows.h>
 #endif
@@ -60,6 +59,7 @@ typedef float  f32;
 ////////////////////////////////////////////////////////////////////////////////
 // DArray - Dynamic Array
 ////////////////////////////////////////////////////////////////////////////////
+// REMINDER: Dynamic Array can be used as a stack. Don't need to create one.
 template <typename T>
 struct DqnArray
 {
@@ -70,27 +70,28 @@ struct DqnArray
 
 #if 0
 template <typename T>
-bool  dqn_darray_init         (DqnArray<T> *array, size_t capacity);
-bool  dqn_darray_grow         (DqnArray<T> *array);
-T    *dqn_darray_push         (DqnArray<T> *array, T item);
-T    *dqn_darray_get          (DqnArray<T> *array, u64 index);
-bool  dqn_darray_clear        (DqnArray<T> *array);
-bool  dqn_darray_free         (DqnArray<T> *array);
-bool  dqn_darray_remove       (DqnArray<T> *array, u64 index);
-bool  dqn_darray_remove_stable(DqnArray<T> *array, u64 index);
+bool  dqn_array_init         (DqnArray<T> *array, size_t capacity);
+bool  dqn_array_grow         (DqnArray<T> *array);
+T    *dqn_array_push         (DqnArray<T> *array, T item);
+T    *dqn_array_pop          (DqnArray<T> *array)
+T    *dqn_array_get          (DqnArray<T> *array, u64 index);
+bool  dqn_array_clear        (DqnArray<T> *array);
+bool  dqn_array_free         (DqnArray<T> *array);
+bool  dqn_array_remove       (DqnArray<T> *array, u64 index);
+bool  dqn_array_remove_stable(DqnArray<T> *array, u64 index);
 #endif
 
 // Implementation taken from Milton, developed by Serge at
 // https://github.com/serge-rgb/milton#license
 template <typename T>
-bool dqn_darray_init(DqnArray<T> *array, size_t capacity)
+bool dqn_array_init(DqnArray<T> *array, size_t capacity)
 {
 	if (!array) return false;
 
 	if (array->data)
 	{
 		// TODO(doyle): Logging? The array already exists
-		if (!dqn_darray_free(array)) return false;
+		if (!dqn_array_free(array)) return false;
 	}
 
 	array->data     = (T *)calloc((size_t)capacity, sizeof(T));
@@ -102,7 +103,7 @@ bool dqn_darray_init(DqnArray<T> *array, size_t capacity)
 }
 
 template <typename T>
-bool dqn_darray_grow(DqnArray<T> *array)
+bool dqn_array_grow(DqnArray<T> *array)
 {
 	if (!array || !array->data) return false;
 
@@ -124,13 +125,13 @@ bool dqn_darray_grow(DqnArray<T> *array)
 }
 
 template <typename T>
-T *dqn_darray_push(DqnArray<T> *array, T item)
+T *dqn_array_push(DqnArray<T> *array, T item)
 {
 	if (!array) return NULL;
 
 	if (array->count >= array->capacity)
 	{
-		if (!dqn_darray_grow(array)) return NULL;
+		if (!dqn_array_grow(array)) return NULL;
 	}
 
 	DQN_ASSERT(array->count < array->capacity);
@@ -140,7 +141,7 @@ T *dqn_darray_push(DqnArray<T> *array, T item)
 }
 
 template <typename T>
-T *dqn_darray_pop(DqnArray<T> *array)
+T *dqn_array_pop(DqnArray<T> *array)
 {
 	if (!array) return NULL;
 	if (array->count == 0) return NULL;
@@ -150,7 +151,7 @@ T *dqn_darray_pop(DqnArray<T> *array)
 }
 
 template <typename T>
-T *dqn_darray_get(DqnArray<T> *array, u64 index)
+T *dqn_array_get(DqnArray<T> *array, u64 index)
 {
 	T *result = NULL;
 	if (index >= 0 && index <= array->count) result = &array->data[index];
@@ -158,7 +159,7 @@ T *dqn_darray_get(DqnArray<T> *array, u64 index)
 }
 
 template <typename T>
-bool dqn_darray_clear(DqnArray<T> *array)
+bool dqn_array_clear(DqnArray<T> *array)
 {
 	if (array)
 	{
@@ -170,7 +171,7 @@ bool dqn_darray_clear(DqnArray<T> *array)
 }
 
 template <typename T>
-bool dqn_darray_free(DqnArray<T> *array)
+bool dqn_array_free(DqnArray<T> *array)
 {
 	if (array && array->data)
 	{
@@ -184,7 +185,7 @@ bool dqn_darray_free(DqnArray<T> *array)
 }
 
 template <typename T>
-bool dqn_darray_remove(DqnArray<T> *array, u64 index)
+bool dqn_array_remove(DqnArray<T> *array, u64 index)
 {
 	if (!array) return false;
 	if (index >= array->count) return false;
@@ -203,7 +204,7 @@ bool dqn_darray_remove(DqnArray<T> *array, u64 index)
 }
 
 template <typename T>
-bool dqn_darray_remove_stable(DqnArray<T> *array, u64 index)
+bool dqn_array_remove_stable(DqnArray<T> *array, u64 index)
 {
 	if (!array) return false;
 	if (index >= array->count) return false;
@@ -989,6 +990,8 @@ STBSP__PUBLICDEF void STB_SPRINTF_DECORATE(set_separators)(char comma, char peri
 // DQN_IMPLEMENTATION
 //
 ////////////////////////////////////////////////////////////////////////////////
+#include "math.h"   // TODO(doyle): For trigonometry functions (for now)
+#include "stdlib.h" // For calloc, malloc, free
 
 // NOTE: STB_SPRINTF modified to be included when DQN_IMPLEMENTATION defined
 // #define STB_SPRINTF_IMPLEMENTATION

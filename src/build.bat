@@ -50,6 +50,7 @@ if %compileMode% == %buildNormal% goto normal_build_flags
 	goto compile
 
 :normal_build_flags
+	set defines=
 	set compileFiles= ..\src\*.cpp
 
 :compile
@@ -66,6 +67,7 @@ REM opt:ref,        try to remove functions from libs that are not referenced at
 set linkFlags=-incremental:no -opt:ref
 
 cl %compileFlags% %defines% %compileFiles% %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /nologo /OUT:"winjump.exe"
+REM cl /P %defines% %compileFiles%
 
 popd
 
