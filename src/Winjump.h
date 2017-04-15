@@ -43,9 +43,13 @@ typedef struct WinjumpState
 	WNDPROC defaultWindowProcEditBox;
 	WNDPROC defaultWindowProcListBox;
 
-	DqnArray<Win32Program> programArray;
-	bool                   currentlyFiltering;
-	bool                   configIsStale;
+	DqnArray<Win32Program>           programArray;
+	DqnArray<DqnArray<Win32Program>> programArraySnapshotStack;
+
+	bool isFilteringResults;
+	bool configIsStale;
+
+	i32  searchStringLen;
 } WinjumpState;
 
 #endif /* WINJUMP_H */

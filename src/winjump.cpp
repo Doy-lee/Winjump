@@ -17,33 +17,28 @@
 // TODO(doyle): Safer subclassing?
 // https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
 
-// TODO(doyle): Organise all our globals siting around.
-// TODO(doyle): Search by index in list to help drilldown after the initial
-// search
-// TODO(doyle): Stop screen flickering by having better listbox updating
-// mechanisms
-// TODO(doyle): Clean up this cesspool.
+// TODO(doyle): Search by index in list to help drilldown after the initial search
 
 #define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 FILE_SCOPE WinjumpState globalState;
 FILE_SCOPE bool         globalRunning;
 
 // Returns length without null terminator, returns 0 if NULL
-FILE_SCOPE i32 wstrlen(const wchar_t *const a)
+FILE_SCOPE inline i32 wstrlen(const wchar_t *const a)
 {
 	i32 result = 0;
 	while (a && a[result]) result++;
 	return result;
 }
 
-FILE_SCOPE i32 wstrlen_delimit_with(const wchar_t *a, const wchar_t delimiter)
+FILE_SCOPE inline i32 wstrlen_delimit_with(const wchar_t *a, const wchar_t delimiter)
 {
 	i32 result = 0;
 	while (a && a[result] && a[result] != delimiter) result++;
 	return result;
 }
 
-FILE_SCOPE bool wchar_is_digit(const wchar_t c)
+FILE_SCOPE inline bool wchar_is_digit(const wchar_t c)
 {
 	if (c >= L'0' && c <= L'9') return true;
 	return false;
@@ -76,8 +71,8 @@ FILE_SCOPE inline wchar_t wchar_to_lower(const wchar_t a)
 	return a;
 }
 
-FILE_SCOPE inline bool wchar_has_substring(const wchar_t *const a, const i32 lenA,
-                                           const wchar_t *const b, const i32 lenB)
+FILE_SCOPE bool wchar_has_substring(const wchar_t *const a, const i32 lenA,
+                                    const wchar_t *const b, const i32 lenB)
 {
 	if (!a || !b) return false;
 	if (lenA == 0 || lenB == 0) return false;
@@ -141,6 +136,60 @@ FILE_SCOPE inline void wchar_str_to_lower(wchar_t *const a, const i32 len)
 		a[i]   = wchar_to_lower(a[i]);
 }
 
+DQN_FILE_SCOPE bool wchar_str_reverse(wchar_t *buf, const i32 bufSize)
+{
+	if (!buf) return false;
+	i32 mid = bufSize / 2;
+
+	for (i32 i = 0; i < mid; i++)
+	{
+		wchar_t tmp            = buf[i];
+		buf[i]                 = buf[(bufSize - 1) - i];
+		buf[(bufSize - 1) - i] = tmp;
+	}
+
+	return true;
+}
+
+DQN_FILE_SCOPE i32 wchar_i32_to_str(i32 value, wchar_t *buf, i32 bufSize)
+{
+	if (!buf || bufSize == 0) return 0;
+
+	if (value == 0)
+	{
+		buf[0] = L'0';
+		return 0;
+	}
+	
+	// NOTE(doyle): Max 32bit integer (+-)2147483647
+	i32 charIndex = 0;
+	bool negative           = false;
+	if (value < 0) negative = true;
+
+	if (negative) buf[charIndex++] = L'-';
+
+	i32 val = DQN_ABS(value);
+	while (val != 0 && charIndex < bufSize)
+	{
+		i32 rem          = val % 10;
+		buf[charIndex++] = (u8)rem + '0';
+		val /= 10;
+	}
+
+	// NOTE(doyle): If string is negative, we only want to reverse starting
+	// from the second character, so we don't put the negative sign at the end
+	if (negative)
+	{
+		wchar_str_reverse(buf + 1, charIndex - 1);
+	}
+	else
+	{
+		wchar_str_reverse(buf, charIndex);
+	}
+
+	return charIndex;
+}
+
 FILE_SCOPE i32 wchar_str_to_i32(const wchar_t *const buf, const i32 bufSize)
 {
 	if (!buf || bufSize == 0) return 0;
@@ -190,8 +239,7 @@ FILE_SCOPE void win32_display_window(HWND window)
 // Returns the number of characters stored into the buffer
 #define FRIENDLY_NAME_LEN 250
 FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
-                                                 i32 programIndex, wchar_t *out,
-                                                 i32 outLen)
+                                                 wchar_t *out, i32 outLen)
 {
 
 	// Friendly Name Format
@@ -200,15 +248,15 @@ FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
 	// For example
 	// 1: Google Search - firefox.exe
 	// 2: Winjump.cpp + (C:\winjump.cpp) - GVIM64 - firefox.exe
-	i32 numStored =
-	    _snwprintf_s(out, outLen, outLen, L"%2d: %s - %s", programIndex + 1,
-	                 program->title, program->exe);
+	i32 numStored = _snwprintf_s(out, outLen, outLen, L"%2d: %s - %s",
+	                             program->lastStableIndex + 1, program->title,
+	                             program->exe);
 	DQN_ASSERT(numStored < FRIENDLY_NAME_LEN);
 
 	return numStored;
 }
 
-BOOL CALLBACK win32_enum_procs_callback(HWND window, LPARAM lParam)
+BOOL CALLBACK win32_enum_windows_callback(HWND window, LPARAM lParam)
 {
 	DqnArray<Win32Program> *programArray = &globalState.programArray;
 	Win32Program program = {};
@@ -258,7 +306,8 @@ BOOL CALLBACK win32_enum_procs_callback(HWND window, LPARAM lParam)
 					CloseHandle(handle);
 				}
 
-				dqn_darray_push(programArray, program);
+				Win32Program *result = dqn_darray_push(programArray, program);
+				if (result) result->lastStableIndex = (i32)programArray->count - 1;
 				break;
 			}
 
@@ -343,6 +392,7 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 				{
 					DqnArray<Win32Program> *programArray =
 					    &globalState.programArray;
+
 					if (programArray->count > 0)
 					{
 						Win32Program programToShow = programArray->data[0];
@@ -777,65 +827,204 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 	return result;
 }
 
-void winjump_update()
+FILE_SCOPE bool
+winjump_program_array_shallow_copy_array_internal(DqnArray<Win32Program> *src,
+                                                  DqnArray<Win32Program> *dest)
 {
-	DqnArray<Win32Program> *programArray = &globalState.programArray;
-	HWND listBox = globalState.window[winjumpwindow_list_program_entries];
+	if (src && dest)
+	{
+		// NOTE: Once we take a snapshot, we stop enumerating windows, so we
+		// only need to allocate exactly array->count
+		if (dqn_darray_init(dest, (size_t)src->count))
+		{
+			DQN_ASSERT(src->data && dest->data);
+			memcpy(dest->data, src->data, (size_t)src->count * sizeof(*src->data));
+			DQN_ASSERT(src->data && dest->data);
+			dest->count = src->count;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+FILE_SCOPE bool
+winjump_program_array_restore_snapshot(WinjumpState *state,
+                                       DqnArray<Win32Program> *snapshot)
+{
+	bool result = winjump_program_array_shallow_copy_array_internal(
+	    snapshot, &state->programArray);
+	return result;
+}
+
+FILE_SCOPE bool
+winjump_program_array_create_snapshot(WinjumpState *state,
+                                      DqnArray<Win32Program> *snapshot)
+{
+	bool result = winjump_program_array_shallow_copy_array_internal(
+	    &state->programArray, snapshot);
+	return result;
+}
+
+void winjump_update(WinjumpState *state)
+{
+	HWND listBox          = state->window[winjumpwindow_list_program_entries];
 	i32 firstVisibleIndex = SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
 
-	DQN_ASSERT(dqn_darray_clear(programArray));
-	EnumWindows(win32_enum_procs_callback, (LPARAM)programArray);
+	// NOTE: Set first char is size of buffer as required by win32
+	wchar_t newSearchStr[WIN32_MAX_PROGRAM_TITLE] = {};
+	newSearchStr[0]  = DQN_ARRAY_COUNT(newSearchStr);
+	HWND editBox     = state->window[winjumpwindow_input_search_entries];
+	i32 newSearchLen = (i32)SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)newSearchStr);
+
+	///////////////////////////////////////////////////////////////////////////
+	// Enumerate windows or initiate state for filtering
+	///////////////////////////////////////////////////////////////////////////
+	state->isFilteringResults            = (newSearchLen > 0);
+	DqnArray<Win32Program> *programArray = &state->programArray;
+	if (!state->isFilteringResults)
+	{
+		for (i32 i = 0; i < state->programArraySnapshotStack.count; i++)
+		{
+			DqnArray<Win32Program> *result =
+			    &state->programArraySnapshotStack.data[i];
+			dqn_darray_free(result);
+		}
+		dqn_darray_clear(programArray);
+		dqn_darray_clear(&state->programArraySnapshotStack);
+
+		EnumWindows(win32_enum_windows_callback, (LPARAM)programArray);
+	}
+	// NOTE: If we are filtering, stop clearing out our array and freeze its
+	// state by stopping window enumeration on the array and instead work
+	// with a stack of snapshots of the state
+	else
+	{
+		DQN_ASSERT(newSearchLen > 0);
+		wchar_str_to_lower(newSearchStr, newSearchLen);
+		if (state->searchStringLen == newSearchLen)
+		{
+			// NOTE: It's possible to remove more than 1 character from the
+			// search string per frame
+		}
+		else
+		{
+			bool searchSpaceDecreased = (newSearchLen > state->searchStringLen);
+			if (searchSpaceDecreased)
+			{
+				DqnArray<Win32Program> snapshot = {};
+				if (winjump_program_array_create_snapshot(state, &snapshot))
+				{
+					dqn_darray_push(&state->programArraySnapshotStack,
+					                snapshot);
+				}
+				else
+				{
+					DQN_WIN32_ERROR_BOX(
+					    "winjump_program_array_create_snapshot() failed: Out"
+					    " of memory ",
+					    NULL);
+					globalRunning = false;
+					return;
+				}
+			}
+			else
+			{
+				if (state->programArraySnapshotStack.count > 0)
+				{
+					DqnArray<Win32Program> *snapshot =
+					    dqn_darray_pop(&state->programArraySnapshotStack);
+					winjump_program_array_restore_snapshot(state, snapshot);
+					dqn_darray_free(snapshot);
+				}
+			}
+		}
+	}
+	state->searchStringLen = newSearchLen;
 
 	////////////////////////////////////////////////////////////////////////////
 	// Filter program array if user is actively searching
 	////////////////////////////////////////////////////////////////////////////
+	if (state->isFilteringResults)
 	{
-		HWND editBox = globalState.window[winjumpwindow_input_search_entries];
+		DQN_ASSERT(newSearchLen < WIN32_MAX_PROGRAM_TITLE);
 
-		// NOTE: Set first char is size of buffer as required by win32
-		wchar_t searchString[WIN32_MAX_PROGRAM_TITLE] = {};
-		searchString[0] = DQN_ARRAY_COUNT(searchString);
+		// NOTE: Really doubt we neeed any more than that
+		i32 userSpecifiedIndex      = 0;
+		i32 userSpecifiedNumbers[8] = {};
 
-		LRESULT searchStringLen =
-		    SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)searchString);
-		wchar_str_to_lower(searchString, searchStringLen);
-		if (searchStringLen > 0)
+		for (i32 j = 0; j < newSearchLen && newSearchStr[j]; j++)
 		{
-			globalState.currentlyFiltering = true;
-			DQN_ASSERT(searchStringLen < WIN32_MAX_PROGRAM_TITLE);
-
-			i32 userSpecifiedIndex = -1;
-			for (i32 j = 0; j < searchStringLen && searchString[j]; j++)
+			if (wchar_is_digit(newSearchStr[j]))
 			{
-				if (wchar_is_digit(searchString[j]))
+				i32 numberFoundInString =
+				    wchar_str_to_i32(&newSearchStr[j], newSearchLen - j);
+
+				// However many number of digits, increment the search ptr,
+				// because there may be multiple numbers in the search string
+				i32 tmp = userSpecifiedIndex;
+				do
 				{
-					userSpecifiedIndex =
-					    wchar_str_to_i32(&searchString[j], searchStringLen - j);
+					tmp /= 10;
+					j++;
+				} while (tmp > 0);
+
+				if (userSpecifiedIndex == DQN_ARRAY_COUNT(userSpecifiedNumbers))
+				{
+					DQN_WIN32_ERROR_BOX(
+					    "winjump_update() warning: No more space for user "
+					    "specified indexes", NULL);
 					break;
 				}
+
+				userSpecifiedNumbers[userSpecifiedIndex++] =
+				    numberFoundInString;
 			}
+		}
 
-			u64 programArraySize = programArray->count;
-			for (i32 index = 0; index < programArraySize; index++)
+		u64 arraySize = programArray->count;
+		for (i32 index = 0; index < arraySize; index++)
+		{
+			Win32Program *program = &programArray->data[index];
+			wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
+			winjump_get_program_friendly_name(program, friendlyName,
+			                                  DQN_ARRAY_COUNT(friendlyName));
+
+			// NOTE: +1 to lastStableIndex since list displays elements starting
+			// from 1 and lastStableIndex is zero-based
+			i32 programIndex             = program->lastStableIndex + 1;
+			bool specifiedNumberWasValid = false;
+			for (i32 i = 0; i < userSpecifiedIndex; i++)
 			{
-				Win32Program *program = &programArray->data[index];
-				wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
-				winjump_get_program_friendly_name(
-				    program, index, friendlyName,
-				    DQN_ARRAY_COUNT(friendlyName));
-
-				wchar_t *searchPtr = searchString;
-				if (!wchar_has_substring(searchString, searchStringLen,
-				                         friendlyName, FRIENDLY_NAME_LEN))
+				// NOTE: Suppose we have indexes, 1 and 14. If 1 is input, we
+				// need both to remain in list entries. We can do this by
+				// eliminating digits from 14 by dividing by 10 until it
+				// matches.
+				i32 specifiedNumber = userSpecifiedNumbers[i];
+				i32 programIndexDigitCheck = programIndex;
+				do
 				{
-					// If search string doesn't match, delete it from display
-					DQN_ASSERT(dqn_darray_remove_stable(programArray, index--));
-					// Update index so we continue iterating over the correct
-					// elements after removing it from the list since the for
-					// loop is post increment and we're removing elements from
-					// the list
-					programArraySize--;
-				}
+					if (specifiedNumber == programIndexDigitCheck)
+					{
+						specifiedNumberWasValid = true;
+						break;
+					}
+					programIndexDigitCheck /= 10;
+				} while (programIndexDigitCheck > 0);
+
+			}
+			if (specifiedNumberWasValid) continue;
+
+			if (!wchar_has_substring(newSearchStr, newSearchLen, friendlyName,
+			                         FRIENDLY_NAME_LEN))
+			{
+				// If search string doesn't match, delete it from display
+				DQN_ASSERT(dqn_darray_remove_stable(programArray, index--));
+				// Update index so we continue iterating over the correct
+				// elements after removing it from the list since the for
+				// loop is post increment and we're removing elements from
+				// the list
+				arraySize--;
 			}
 		}
 	}
@@ -854,7 +1043,7 @@ void winjump_update()
 
 			// TODO(doyle): Tighten memory alloc using len vars in program
 			wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
-			winjump_get_program_friendly_name(program, index, friendlyName,
+			winjump_get_program_friendly_name(program, friendlyName,
 			                                  DQN_ARRAY_COUNT(friendlyName));
 
 			wchar_t entry[FRIENDLY_NAME_LEN] = {};
@@ -887,7 +1076,7 @@ void winjump_update()
 				Win32Program *program = &programArray->data[i];
 				wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
 				winjump_get_program_friendly_name(
-				    program, i, friendlyName, DQN_ARRAY_COUNT(friendlyName));
+				    program, friendlyName, DQN_ARRAY_COUNT(friendlyName));
 
 				LRESULT insertIndex = SendMessageW(listBox, LB_ADDSTRING, 0,
 				                                   (LPARAM)friendlyName);
@@ -905,7 +1094,6 @@ void winjump_update()
 
 		SendMessageW(listBox, LB_SETTOPINDEX, firstVisibleIndex, 0);
 	}
-
 }
 
 FILE_SCOPE void winjump_unit_test_local_functions()
@@ -1002,6 +1190,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		return -1;
 	}
 
+	if (!dqn_darray_init(&globalState.programArraySnapshotStack, 4))
+	{
+		DQN_WIN32_ERROR_BOX("dqn_darray_init() failed: Not enough memory.",
+		                    NULL);
+		return -1;
+	}
+
+
 #define GUID_HOTKEY_ACTIVATE_APP 10983
 	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
 
@@ -1031,7 +1227,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			DispatchMessageW(&msg);
 		}
 
-		winjump_update();
+		winjump_update(&globalState);
 		////////////////////////////////////////////////////////////////////////
 		// Update Status Bar
 		////////////////////////////////////////////////////////////////////////
