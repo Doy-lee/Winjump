@@ -29,19 +29,28 @@ typedef struct Win32Program
 enum WinjumpWindows
 {
 	winjumpwindow_main_client,
+	winjumpwindow_tab,
+	winjumpwindow_btn_change_font,
 	winjumpwindow_list_program_entries,
 	winjumpwindow_input_search_entries,
 	winjumpwindow_status_bar,
 	winjumpwindow_count,
 };
 
+#define WIN32_NOT_PART_OF_TAB -1
+typedef struct Win32Window
+{
+	HWND handle;
+	i32  tabIndex = WIN32_NOT_PART_OF_TAB;
+
+	// The default proc to fallback to when subclassing. Is 0 if not defined
+	WNDPROC defaultProc;
+} Win32Window;
+
 typedef struct WinjumpState
 {
 	HFONT   font;
-	HWND    window[winjumpwindow_count];
-	WNDPROC defaultWindowProc;
-	WNDPROC defaultWindowProcEditBox;
-	WNDPROC defaultWindowProcListBox;
+	Win32Window window[winjumpwindow_count];
 
 	DqnArray<Win32Program>           programArray;
 	DqnArray<DqnArray<Win32Program>> programArraySnapshotStack;

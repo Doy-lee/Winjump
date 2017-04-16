@@ -15,9 +15,12 @@
 	#include "dqn.h"
 #endif
 
+#define WINJUMP_DEBUG_MODE
+
 // TODO(doyle): Safer subclassing?
 // https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
 
+#define WIN32_UI_MARGIN 5
 #define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 FILE_SCOPE WinjumpState globalState;
 FILE_SCOPE bool         globalRunning;
@@ -118,10 +121,30 @@ BOOL CALLBACK win32_enum_windows_callback(HWND window, LPARAM lParam)
 	return true;
 }
 
+FILE_SCOPE Win32Window *winjump_get_win32window_from_hwnd(WinjumpState *state,
+                                                          HWND hwnd)
+{
+	Win32Window *result = NULL;
+	for (i32 i = 0; i < DQN_ARRAY_COUNT(state->window); i++)
+	{
+		if (state->window[i].handle == hwnd)
+		{
+			result = &state->window[i];
+			return result;
+		}
+	}
+
+	return result;
+}
+
 FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
                                                     WPARAM wParam,
                                                     LPARAM lParam)
 {
+	Win32Window *win32Window =
+	    winjump_get_win32window_from_hwnd(&globalState, window);
+	DQN_ASSERT(win32Window);
+
 	LRESULT result = 0;
 	switch (msg)
 	{
@@ -136,8 +159,8 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 #if 0
 			return true;
 #else
-			return CallWindowProcW(globalState.defaultWindowProcListBox, window,
-			                       msg, wParam, lParam);
+			return CallWindowProcW(win32Window->defaultProc, window, msg,
+			                       wParam, lParam);
 #endif
 		}
 		break;
@@ -151,8 +174,8 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 			HDC deviceContext = BeginPaint(window, &paint);
 			FillRect(deviceContext, &clientRect,
 			         GetSysColorBrush(COLOR_WINDOW));
-			CallWindowProcW(globalState.defaultWindowProcListBox, window,
-			                WM_PAINT, (WPARAM)deviceContext, (LPARAM)0);
+			CallWindowProcW(win32Window->defaultProc, window, WM_PAINT,
+			                (WPARAM)deviceContext, (LPARAM)0);
 			BitBlt(deviceContext, 0, 0, clientRect.right, clientRect.bottom,
 			       deviceContext, 0, 0, SRCCOPY);
 			EndPaint(window, &paint);
@@ -161,8 +184,8 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 
 		default:
 		{
-			return CallWindowProcW(globalState.defaultWindowProcListBox, window,
-			                       msg, wParam, lParam);
+			return CallWindowProcW(win32Window->defaultProc, window, msg, wParam,
+			                       lParam);
 		}
 		break;
 	}
@@ -170,11 +193,15 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 	return result;
 }
 
-FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
+FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND window,
                                                          UINT msg,
                                                          WPARAM wParam,
                                                          LPARAM lParam)
 {
+	Win32Window *win32Window =
+	    winjump_get_win32window_from_hwnd(&globalState, window);
+	DQN_ASSERT(win32Window);
+
 	LRESULT result = 0;
 	switch (msg)
 	{
@@ -196,18 +223,18 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 						Win32Program programToShow = programArray->data[0];
 
 						win32_display_window(programToShow.window);
-						SetWindowText(editWindow, "");
-						ShowWindow(
-						    globalState.window[winjumpwindow_main_client],
-						    SW_MINIMIZE);
+						SetWindowText(window, "");
+						ShowWindow(globalState.window[winjumpwindow_main_client]
+						               .handle,
+						           SW_MINIMIZE);
 					}
 				}
 				break;
 
 				default:
 				{
-					return CallWindowProcW(globalState.defaultWindowProcEditBox,
-					                       editWindow, msg, wParam, lParam);
+					return CallWindowProcW(win32Window->defaultProc, window,
+					                       msg, wParam, lParam);
 				}
 			}
 		}
@@ -227,52 +254,28 @@ FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND editWindow,
 				{
 					// If escape is pressed, empty the text
 					HWND inputBox =
-					    globalState.window[winjumpwindow_input_search_entries];
+					    globalState.window[winjumpwindow_input_search_entries]
+					        .handle;
 					SetWindowTextW(inputBox, L"");
 					return 0;
 				}
 
 				default:
 				{
-					return CallWindowProcW(globalState.defaultWindowProcEditBox,
-					                       editWindow, msg, wParam, lParam);
+					return CallWindowProcW(win32Window->defaultProc, window,
+					                       msg, wParam, lParam);
 				}
 			}
 		}
 
 		default:
 		{
-			return CallWindowProcW(globalState.defaultWindowProcEditBox,
-			                       editWindow, msg, wParam, lParam);
+			return CallWindowProcW(win32Window->defaultProc, window, msg,
+			                       wParam, lParam);
 		}
 	}
 
 	return result;
-}
-
-enum Win32Menu
-{
-	win32menu_file_exit,
-	win32menu_options_font,
-	win32menu_count,
-};
-
-FILE_SCOPE void win32_menu_create(HWND window)
-{
-	HMENU menuBar  = CreateMenu();
-	{ // File Menu
-		HMENU menu = CreatePopupMenu();
-		AppendMenuW(menuBar, MF_STRING | MF_POPUP, (UINT)menu, L"File");
-		AppendMenuW(menu, MF_STRING, win32menu_file_exit, L"Exit");
-	}
-
-	{ // Options Menu
-		HMENU menu = CreatePopupMenu();
-		AppendMenuW(menuBar, MF_STRING | MF_POPUP, (UINT)menu, L"Options");
-		AppendMenuW(menu, MF_STRING, win32menu_options_font, L"Font");
-	}
-
-	SetMenu(window, menuBar);
 }
 
 FILE_SCOPE void win32_font_calculate_dim(HDC deviceContext, HFONT font,
@@ -294,6 +297,18 @@ FILE_SCOPE void win32_font_calculate_dim(HDC deviceContext, HFONT font,
 	if (height) *height = rect.bottom - rect.top;
 }
 
+FILE_SCOPE void win32_tab_get_offset_to_content(HWND window, LONG *offsetX,
+                                                LONG *offsetY)
+{
+	if (window)
+	{
+		RECT rect;
+		TabCtrl_GetItemRect(window, 0, &rect);
+		if (offsetX) *offsetX = rect.left;
+		if (offsetY) *offsetY = rect.bottom;
+	}
+}
+
 // NOTE: Resizing the search box will readjust elements dependent on its size
 FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
                                           i32 newWidth,
@@ -301,33 +316,35 @@ FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
                                           const bool ignoreWidth,
                                           const bool ignoreHeight)
 {
-	const i32 MARGIN = 5;
-	HWND editWindow  = globalState.window[winjumpwindow_input_search_entries];
+	HWND tab = globalState.window[winjumpwindow_tab].handle;
+	RECT tabDisplayRect;
+	TabCtrl_GetItemRect(tab, 0, &tabDisplayRect);
 
+	HWND editWindow =
+	    globalState.window[winjumpwindow_input_search_entries].handle;
 	LONG origWidth, origHeight;
 	dqn_win32_get_client_dim(editWindow, &origWidth, &origHeight);
+
 	if (ignoreWidth)  newWidth  = origWidth;
 	if (ignoreHeight) newHeight = origHeight;
 
 	// Resize the edit box that is used for filtering
-	DqnV2 editP = dqn_v2i(MARGIN, MARGIN);
+	DqnV2 editP =
+	    dqn_v2i(WIN32_UI_MARGIN, tabDisplayRect.bottom + WIN32_UI_MARGIN);
 	MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, newWidth, newHeight,
 	           TRUE);
 
 	// Resize the list window
 	{
-		LONG statusBarHeight;
-		dqn_win32_get_client_dim(globalState.window[winjumpwindow_status_bar],
-		                         NULL, &statusBarHeight);
+		LONG clientHeight;
+		dqn_win32_get_client_dim(globalState.window[winjumpwindow_tab].handle,
+		                         NULL, &clientHeight);
 
-		LONG clientWidth, clientHeight;
-		dqn_win32_get_client_dim(globalState.window[winjumpwindow_main_client],
-		                         &clientWidth, &clientHeight);
-
-		HWND listWindow = state->window[winjumpwindow_list_program_entries];
-		DqnV2 listP     = dqn_v2(editP.x, (editP.y + newHeight + MARGIN));
-		i32 listWidth   = newWidth;
-		i32 listHeight  = clientHeight - (i32)listP.y - statusBarHeight;
+		HWND listWindow =
+		    state->window[winjumpwindow_list_program_entries].handle;
+		DqnV2 listP = dqn_v2(editP.x, (editP.y + newHeight + WIN32_UI_MARGIN));
+		i32 listWidth  = newWidth;
+		i32 listHeight = clientHeight - (i32)listP.y;
 
 		MoveWindow(listWindow, (i32)listP.x, (i32)listP.y, listWidth,
 		           listHeight, TRUE);
@@ -345,13 +362,13 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 		bool redrawImmediately = false;
 		for (i32 i = 0; i < winjumpwindow_count; i++)
 		{
-			HWND targetWindow = globalState.window[i];
+			HWND targetWindow = globalState.window[i].handle;
 			SendMessage(targetWindow, WM_SETFONT, (WPARAM)font,
 			            redrawImmediately);
 		}
 
 		HWND editWindow =
-		    globalState.window[winjumpwindow_input_search_entries];
+		    globalState.window[winjumpwindow_input_search_entries].handle;
 		HDC deviceContext = GetDC(editWindow);
 
 		LONG newHeight;
@@ -369,93 +386,22 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 		                    NULL);
 	}
 }
-
-FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
-                                                WPARAM wParam, LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
+                                                    WPARAM wParam,
+                                                    LPARAM lParam)
 {
+	// TODO: Since edit box, list, btns etc, most main UI is living as childs in
+	// the tab, all the command calls are being sent to tab ctrl callback
+
+	// Not sure why they're not propagating to the main callback since
+	// mainwindow owns tabs which owns the lists/btns etc
+	Win32Window *win32Window =
+	    winjump_get_win32window_from_hwnd(&globalState, window);
+	DQN_ASSERT(win32Window);
+
 	LRESULT result = 0;
 	switch (msg)
 	{
-		case WM_CREATE:
-		{
-			win32_menu_create(window);
-			globalState.defaultWindowProc                 = win32_main_callback;
-			globalState.window[winjumpwindow_main_client] = window;
-
-			// NOTE(doyle): Don't set position here, since creation sends
-			// a WM_SIZE, we just put all the size and position logic in there.
-			////////////////////////////////////////////////////////////////////
-			// Create Edit Window
-			////////////////////////////////////////////////////////////////////
-			HWND editWindow = CreateWindowExW(
-			  WS_EX_CLIENTEDGE,
-			  L"EDIT",
-			  NULL,
-			  WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP,
-			  0,
-			  0,
-			  0,
-			  0,
-			  window,
-			  NULL,
-			  NULL,
-			  NULL
-			);
-			globalState.window[winjumpwindow_input_search_entries] = editWindow;
-			SetFocus(editWindow);
-			globalState.defaultWindowProcEditBox = (WNDPROC)SetWindowLongPtrW(
-			    editWindow, GWLP_WNDPROC,
-			    (LONG_PTR)win32_capture_enter_callback);
-
-			////////////////////////////////////////////////////////////////////
-			// Create List Window
-			////////////////////////////////////////////////////////////////////
-			HWND listWindow = CreateWindowExW(
-			  WS_EX_CLIENTEDGE | WS_EX_COMPOSITED,
-			  L"LISTBOX",
-			  NULL,
-			  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |  WS_HSCROLL
-			  | LBS_NOTIFY,
-			  0, // x
-			  0, // y
-			  0, // width
-			  0, // height
-			  window,
-			  NULL,
-			  NULL,
-			  NULL
-			);
-			globalState.defaultWindowProcListBox = (WNDPROC)SetWindowLongPtrW(
-			    listWindow, GWLP_WNDPROC,
-			    (LONG_PTR)win32_list_box_callback);
-			globalState.window[winjumpwindow_list_program_entries] = listWindow;
-
-			////////////////////////////////////////////////////////////////////
-			// Create Status Bar
-			////////////////////////////////////////////////////////////////////
-			InitCommonControls();
-			HWND statusWindow = CreateWindowExW(
-			    WS_EX_COMPOSITED,
-			    STATUSCLASSNAMEW,          // name of status bar class
-			    NULL,                      // no text when first created
-			    SBARS_SIZEGRIP |           // includes a sizing grip
-			        WS_CHILD | WS_VISIBLE, // creates a visible child window
-			    0,
-			    0, 0, 0, // ignores size and position
-			    window,  // parent
-			    NULL,    // child window identifier
-			    NULL,    // handle to application instance
-			    NULL);
-			globalState.window[winjumpwindow_status_bar] = statusWindow;
-
-			////////////////////////////////////////////////////////////////////
-			// Use Default Font
-			////////////////////////////////////////////////////////////////////
-			HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-			winjump_font_change(&globalState, font);
-		}
-		break;
-
 		case WM_COMMAND:
 		{
 
@@ -465,7 +411,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			// lParam         = Control Handle
 			HWND handle = (HWND)lParam;
 			if (handle ==
-			    globalState.window[winjumpwindow_list_program_entries])
+			    globalState.window[winjumpwindow_list_program_entries].handle)
 			{
 				WORD notificationCode = HIWORD((DWORD)wParam);
 				if (notificationCode == LBN_SELCHANGE)
@@ -489,6 +435,48 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 						win32_display_window(showProgram.window);
 					}
 				}
+				else
+				{
+					result = DefWindowProcW(window, msg, wParam, lParam);
+				}
+				break;
+			}
+
+			if (handle ==
+			    globalState.window[winjumpwindow_btn_change_font].handle)
+			{
+				WORD notificationCode = HIWORD((DWORD)wParam);
+				if (notificationCode == BN_CLICKED)
+				{
+					LOGFONTW chosenFont = {};
+					GetObjectW(globalState.font, sizeof(chosenFont),
+					           &chosenFont);
+
+					CHOOSEFONTW chooseFont = {};
+					chooseFont.lStructSize = sizeof(chooseFont);
+					chooseFont.hwndOwner   = window;
+					chooseFont.lpLogFont   = &chosenFont;
+					chooseFont.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT;
+
+					if (ChooseFontW(&chooseFont))
+					{
+						HFONT font = CreateFontIndirectW(&chosenFont);
+						if (font)
+						{
+							winjump_font_change(&globalState, font);
+							globalState.configIsStale = true;
+						}
+						else
+						{
+							DQN_WIN32_ERROR_BOX("CreateFontIndirectW() failed",
+							                    NULL);
+						}
+					}
+				}
+				else
+				{
+					result = DefWindowProcW(window, msg, wParam, lParam);
+				}
 				break;
 			}
 
@@ -496,53 +484,196 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			// HIWORD(wParam) = 0
 			// LOWORD(wParam) = MenuID
 			// lParam         = 0
-			if ((HIWORD(wParam) == 0 && lParam == 0) &&
-			    (LOWORD(wParam) >= 0 && LOWORD(wParam) < win32menu_count))
+		}
+		break;
+
+		default:
+		{
+			return CallWindowProcW(win32Window->defaultProc, window, msg,
+			                       wParam, lParam);
+		}
+	}
+
+	return result;
+}
+
+FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
+                                                WPARAM wParam, LPARAM lParam)
+{
+	LRESULT result = 0;
+	switch (msg)
+	{
+		case WM_CREATE:
+		{
+			InitCommonControls();
+			globalState.window[winjumpwindow_main_client].handle = window;
+
+			// NOTE(doyle): Don't set position here, since creation sends
+			// a WM_SIZE, we just put all the size and position logic in there.
+			////////////////////////////////////////////////////////////////////
+			// Create Tab Window
+			////////////////////////////////////////////////////////////////////
+			Win32Window tabWindow = {};
+			tabWindow.handle = CreateWindowExW(
+			  WS_EX_COMPOSITED,
+			  WC_TABCONTROLW,
+			  NULL,
+			  WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | WS_BORDER,
+			  0,
+			  0,
+			  0,
+			  0,
+			  window,
+			  NULL,
+			  NULL,
+			  NULL
+			);
+			tabWindow.defaultProc =
+			    (WNDPROC)SetWindowLongPtrW(tabWindow.handle, GWLP_WNDPROC,
+			                               (LONG_PTR)win32_tab_ctrl_callback);
+			globalState.window[winjumpwindow_tab] = tabWindow;
+
+			// Add first tab
 			{
-				switch (LOWORD(wParam))
+				TCITEM tabControlItem  = {};
+				tabControlItem.mask    = TCIF_TEXT;
+				tabControlItem.pszText = "List";
+				i32 tabIndex           = TabCtrl_InsertItem(
+				    tabWindow.handle, TabCtrl_GetItemCount(tabWindow.handle),
+				    &tabControlItem);
+
+				////////////////////////////////////////////////////////////////////
+				// Create Edit Window
+				////////////////////////////////////////////////////////////////////
+				Win32Window editWindow = {};
+				editWindow.handle      = CreateWindowExW(
+				    WS_EX_COMPOSITED | WS_EX_CLIENTEDGE, L"EDIT", NULL,
+				    WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP, 0, 0, 0, 0,
+				    tabWindow.handle, NULL, NULL, NULL);
+				editWindow.tabIndex = tabIndex;
+				editWindow.defaultProc =
+			 	    (WNDPROC)SetWindowLongPtrW(editWindow.handle, GWLP_WNDPROC, (LONG_PTR)win32_capture_enter_callback);
+
+				globalState.window[winjumpwindow_input_search_entries] =
+				    editWindow;
+				SetFocus(editWindow.handle);
+
+				////////////////////////////////////////////////////////////////////
+				// Create List Window
+				////////////////////////////////////////////////////////////////////
+				Win32Window listWindow = {};
+				listWindow.handle = CreateWindowExW(
+				    WS_EX_COMPOSITED | WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
+				    WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+				        WS_HSCROLL | LBS_NOTIFY,
+				    0, // x
+				    0, // y
+				    0, // width
+				    0, // height
+				    tabWindow.handle, NULL, NULL, NULL);
+				listWindow.tabIndex = tabIndex;
+				listWindow.defaultProc = (WNDPROC)SetWindowLongPtrW(listWindow.handle, GWLP_WNDPROC, (LONG_PTR)win32_list_box_callback);
+
+				globalState.window[winjumpwindow_list_program_entries] =
+				    listWindow;
+			}
+
+			// Create 2nd tab, options
+			{
+				TCITEM tabControlItem  = {};
+				tabControlItem.mask    = TCIF_TEXT;
+				tabControlItem.pszText = "Options";
+				i32 tabIndex           = TabCtrl_InsertItem(
+				    tabWindow.handle, TabCtrl_GetItemCount(tabWindow.handle),
+				    &tabControlItem);
+
+				Win32Window btnChangeFont = {};
+				btnChangeFont.handle      = CreateWindowExW(
+				    NULL,
+				    L"BUTTON",      // Predefined class; Unicode assumed
+				    L"Change Font", // Button text
+				    WS_TABSTOP | WS_CHILD | BS_DEFPUSHBUTTON, // Styles
+				    0,                                        // x position
+				    0,                                        // y position
+				    0,                                        // Button width
+				    0,                                        // Button height
+				    tabWindow.handle,                         // Parent window
+				    NULL,                                     // No menu.
+				    NULL,
+				    NULL); // Pointer not needed.
+				btnChangeFont.tabIndex = tabIndex;
+				globalState.window[winjumpwindow_btn_change_font] =
+				    btnChangeFont;
+			}
+
+			////////////////////////////////////////////////////////////////////
+			// Create Status Bar
+			////////////////////////////////////////////////////////////////////
+			Win32Window statusWindow = {};
+			statusWindow.handle      = CreateWindowExW(
+			    NULL,
+			    STATUSCLASSNAMEW,          // name of status bar class
+			    NULL,                      // no text when first created
+			    SBARS_SIZEGRIP |           // includes a sizing grip
+			        WS_CHILD | WS_VISIBLE, // creates a visible child window
+			    0,
+			    0, 0, 0, // ignores size and position
+			    window,  // parent
+			    NULL,    // child window identifier
+			    NULL,    // handle to application instance
+			    NULL);
+			globalState.window[winjumpwindow_status_bar] = statusWindow;
+
+			////////////////////////////////////////////////////////////////////
+			// Use Default Font
+			////////////////////////////////////////////////////////////////////
+			HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+			winjump_font_change(&globalState, font);
+
+#ifdef WINJUMP_DEBUG_MODE
+			for (i32 i = 0; i < DQN_ARRAY_COUNT(globalState.window); i++)
+				DQN_ASSERT(globalState.window[i].handle);
+#endif
+		}
+		break;
+
+		case WM_NOTIFY:
+		{
+			NMHDR *notificationMsg = (NMHDR *)lParam;
+			if (notificationMsg->hwndFrom ==
+			    globalState.window[winjumpwindow_tab].handle)
+			{
+				switch (notificationMsg->code)
 				{
-					case win32menu_file_exit:
+					case TCN_SELCHANGE:
 					{
-						globalRunning = false;
-					}
-					break;
+						i32 newTabIndex =
+						    TabCtrl_GetCurSel(notificationMsg->hwndFrom);
+						if (newTabIndex == -1) return result;
 
-					case win32menu_options_font:
-					{
-						LOGFONTW chosenFont = {};
-						GetObjectW(globalState.font, sizeof(chosenFont),
-						          &chosenFont);
-
-						CHOOSEFONTW chooseFont = {};
-						chooseFont.lStructSize = sizeof(chooseFont);
-						chooseFont.hwndOwner   = window;
-						chooseFont.lpLogFont   = &chosenFont;
-						chooseFont.Flags =
-						    CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT;
-
-						if (ChooseFontW(&chooseFont))
+						for (i32 i = 0; i < DQN_ARRAY_COUNT(globalState.window);
+						     i++)
 						{
-							HFONT font = CreateFontIndirectW(&chosenFont);
-							if (font)
+							Win32Window win32Window = globalState.window[i];
+							if (win32Window.tabIndex == WIN32_NOT_PART_OF_TAB)
+								continue;
+
+							if (win32Window.tabIndex == newTabIndex)
 							{
-								winjump_font_change(&globalState, font);
-								globalState.configIsStale = true;
+								ShowWindow(win32Window.handle, SW_SHOW);
 							}
 							else
 							{
-								DQN_WIN32_ERROR_BOX(
-								    "CreateFontIndirectW() failed", NULL);
+								ShowWindow(win32Window.handle, SW_HIDE);
 							}
 						}
 					}
 					break;
-
-					default:
-					{
-						// Do nothing
-					}
-					break;
 				}
+			}
+			else
+			{
+				result = DefWindowProcW(window, msg, wParam, lParam);
 			}
 		}
 		break;
@@ -557,7 +688,8 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 		case WM_HOTKEY:
 		{
 			win32_display_window(window);
-			HWND editBox = globalState.window[winjumpwindow_input_search_entries];
+			HWND editBox =
+			    globalState.window[winjumpwindow_input_search_entries].handle;
 			SetFocus(editBox);
 		}
 		break;
@@ -567,18 +699,18 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			LONG clientWidth, clientHeight;
 			dqn_win32_get_client_dim(window, &clientWidth, &clientHeight);
 
+			// NOTE: This can be called before inner window elements are created
 			////////////////////////////////////////////////////////////////////
 			// Re-configure Status Bar on Resize
 			////////////////////////////////////////////////////////////////////
+			HWND status = globalState.window[winjumpwindow_status_bar].handle;
 			{
-				HWND status = globalState.window[winjumpwindow_status_bar];
-
 				// Setup the parts of the status bar
 				const WPARAM numParts  = 3;
 				i32 partsPos[numParts] = {};
 
 				i32 partsInterval = clientWidth / numParts;
-				for (i32 i = 0; i < numParts; i++)
+				for (i32 i      = 0; i < numParts; i++)
 					partsPos[i] = partsInterval * (i + 1);
 				SendMessageW(status, SB_SETPARTS, numParts, (LPARAM)partsPos);
 
@@ -587,27 +719,59 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			}
 
 			////////////////////////////////////////////////////////////////////
+			// Setup tab interface
+			////////////////////////////////////////////////////////////////////
+			HWND tab = globalState.window[winjumpwindow_tab].handle;
+			{
+				LONG statusHeight;
+				dqn_win32_get_client_dim(status, NULL, &statusHeight);
+
+				MoveWindow(tab, 0, 0, clientWidth, clientHeight - statusHeight,
+				           TRUE);
+			}
+
+			////////////////////////////////////////////////////////////////////
 			// Adjust the search box and entry list
 			////////////////////////////////////////////////////////////////////
 			{
 				HWND editWindow =
-				    globalState.window[winjumpwindow_input_search_entries];
-
-				const i32 MARGIN = 5;
-				LONG searchHeight, searchWidth = clientWidth - (2 * MARGIN);
+				    globalState.window[winjumpwindow_input_search_entries]
+				        .handle;
+				const i32 MIN_SEARCH_HEIGHT = 18;
 
 				HDC deviceContext = GetDC(editWindow);
+
+				LONG searchHeight;
 				win32_font_calculate_dim(deviceContext, globalState.font,
 				                         WINJUMP_STRING_TO_CALC_HEIGHT, NULL,
 				                         &searchHeight);
-				searchHeight = (LONG)(searchHeight * 1.85f);
-
+				searchHeight =
+				    DQN_MAX(MIN_SEARCH_HEIGHT, (LONG)(searchHeight * 1.85f));
 				ReleaseDC(editWindow, deviceContext);
+
+				LONG searchWidth;
+				dqn_win32_get_client_dim(tab, &searchWidth, NULL);
+				searchWidth -= (2 * WIN32_UI_MARGIN);
 
 				// NOTE: This also re-positions the list because it depends on
 				// the search box position
 				winjump_resize_search_box(&globalState, searchWidth,
 				                          searchHeight, false, false);
+			}
+
+			////////////////////////////////////////////////////////////////////
+			// Adjust the options tab elements
+			////////////////////////////////////////////////////////////////////
+			{
+				HWND btnChangeFont =
+				    globalState.window[winjumpwindow_btn_change_font].handle;
+				DqnV2 btnDim = dqn_v2(100, 100);
+
+				LONG offsetY = 0;
+				win32_tab_get_offset_to_content(tab, NULL, &offsetY);
+				MoveWindow(btnChangeFont, WIN32_UI_MARGIN,
+				           WIN32_UI_MARGIN + offsetY, (i32)btnDim.w,
+				           (i32)btnDim.h, TRUE);
 			}
 
 			result = DefWindowProcW(window, msg, wParam, lParam);
@@ -666,37 +830,28 @@ winjump_program_array_create_snapshot(WinjumpState *state,
 
 void winjump_update(WinjumpState *state)
 {
-	HWND listBox          = state->window[winjumpwindow_list_program_entries];
+	HWND listBox = state->window[winjumpwindow_list_program_entries].handle;
 	i32 firstVisibleIndex = SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
 
 	// NOTE: Set first char is size of buffer as required by win32
 	wchar_t newSearchStr[WIN32_MAX_PROGRAM_TITLE] = {};
 	newSearchStr[0]  = DQN_ARRAY_COUNT(newSearchStr);
-	HWND editBox     = state->window[winjumpwindow_input_search_entries];
+	HWND editBox     = state->window[winjumpwindow_input_search_entries].handle;
 	i32 newSearchLen = (i32)SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)newSearchStr);
+
+	LONG width, height;
+	dqn_win32_get_client_dim(editBox, &width, &height);
 
 	///////////////////////////////////////////////////////////////////////////
 	// Enumerate windows or initiate state for filtering
 	///////////////////////////////////////////////////////////////////////////
 	state->isFilteringResults            = (newSearchLen > 0);
 	DqnArray<Win32Program> *programArray = &state->programArray;
-	if (!state->isFilteringResults)
-	{
-		for (i32 i = 0; i < state->programArraySnapshotStack.count; i++)
-		{
-			DqnArray<Win32Program> *result =
-			    &state->programArraySnapshotStack.data[i];
-			dqn_array_free(result);
-		}
-		dqn_array_clear(programArray);
-		dqn_array_clear(&state->programArraySnapshotStack);
 
-		EnumWindows(win32_enum_windows_callback, (LPARAM)programArray);
-	}
 	// NOTE: If we are filtering, stop clearing out our array and freeze its
 	// state by stopping window enumeration on the array and instead work
 	// with a stack of snapshots of the state
-	else
+	if (state->isFilteringResults)
 	{
 		DQN_ASSERT(newSearchLen > 0);
 		wchar_str_to_lower(newSearchStr, newSearchLen);
@@ -737,6 +892,19 @@ void winjump_update(WinjumpState *state)
 				}
 			}
 		}
+	}
+	else
+	{
+		for (i32 i = 0; i < state->programArraySnapshotStack.count; i++)
+		{
+			DqnArray<Win32Program> *result =
+			    &state->programArraySnapshotStack.data[i];
+			dqn_array_free(result);
+		}
+		dqn_array_clear(programArray);
+		dqn_array_clear(&state->programArraySnapshotStack);
+
+		EnumWindows(win32_enum_windows_callback, (LPARAM)programArray);
 	}
 	state->searchStringLen = newSearchLen;
 
@@ -932,7 +1100,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	////////////////////////////////////////////////////////////////////////////
 	// Create Win32 Window
 	////////////////////////////////////////////////////////////////////////////
-	winjump_unit_test_local_functions();
+	debug_unit_test_local_functions();
 
 	WNDCLASSEXW wc = {
 	    sizeof(WNDCLASSEX),
@@ -965,7 +1133,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	r.right  = 450;
 	r.bottom = 200;
 
-	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
+	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPSIBLINGS;
 	AdjustWindowRect(&r, windowStyle, true);
 
 	globalRunning           = true;
@@ -1030,7 +1198,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		////////////////////////////////////////////////////////////////////////
 		// Update Status Bar
 		////////////////////////////////////////////////////////////////////////
-		HWND status = globalState.window[winjumpwindow_status_bar];
+		HWND status = globalState.window[winjumpwindow_status_bar].handle;
 		{
 			// Active Windows text in Status Bar
 			{
