@@ -1,12 +1,18 @@
 # Winjump
-![Winjump Screenshots](docs/winjump_a.png)
+![Winjump Screenshots](docs/winjump_1.png)
+![Winjump Screenshots](docs/winjump_2.png)
 
-Winjump is a utility that allows moving between windows on the desktop quicker, for example, you're programming in Vim and want to go to some other window without moving your hand from the home keys. Or you want a text-based alternative to ALT-Tabbing which can be faster if you know exactly what application you want to switch to.
+Winjump is a small Windows utility built using the WIN32 api, for quickly navigating between applications when programming. Winjump is designed to accomodate the ideology of working with home row keys, minimising the travel time between writing code and searching information. The application allows you to bring other active applications to focus by searching its' name.
 
 The project is currently built using the WIN32API with minimal external libraries. As a result it's a single file executable with little to no dependencies and has a light footprint.
 
+The program searches and attemps to match by
+- Window Title
+- Index in list
+- Executable name
+
 # Usage
-1. Press ALT-K (non-configurable at the moment) to activate the Window.
+1. Press ALT-K (configurable hotkey) to activate the Window.
 2. Type in desired window name to bring to front.
 3. Press enter when name matches the window name.
 

@@ -147,6 +147,8 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 	    winjump_get_win32window_from_hwnd(&globalState, window);
 	DQN_ASSERT(win32Window);
 
+#define WIN32_LIST_DOUBLE_BUFFERING 0
+
 	LRESULT result = 0;
 	switch (msg)
 	{
@@ -158,7 +160,7 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 			// will show the black erased background because, I think,
 			// WM_PAINT's aren't being called but something else, so our
 			// FillRect is not being called.
-#if 1
+#if WIN32_LIST_DOUBLE_BUFFERING
 			return true;
 #else
 			return CallWindowProcW(win32Window->defaultProc, window, msg,
@@ -169,7 +171,7 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 
 		case WM_PAINT:
 		{
-#if 1
+#if WIN32_LIST_DOUBLE_BUFFERING
 			RECT clientRect;
 			GetClientRect(window, &clientRect);
 
@@ -199,6 +201,7 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 				DeleteObject(drawBitmap);
 			}
 			EndPaint(window, &paint);
+			return result;
 #else
 			return CallWindowProcW(win32Window->defaultProc, window, msg,
 			                       wParam, lParam);
@@ -214,7 +217,6 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 		break;
 	}
 
-	return result;
 }
 
 FILE_SCOPE LRESULT CALLBACK win32_edit_box_callback(HWND window,
@@ -828,7 +830,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			  WS_EX_COMPOSITED,
 			  WC_TABCONTROLW,
 			  NULL,
-			  WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | WS_BORDER,
+			  WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE,
 			  0,
 			  0,
 			  0,
@@ -857,7 +859,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				// Create Edit Window
 				Win32Window editWindow = {};
 				editWindow.handle      = CreateWindowExW(
-				    WS_EX_COMPOSITED | WS_EX_CLIENTEDGE, L"EDIT", NULL,
+				    WS_EX_COMPOSITED, L"EDIT", NULL,
 				    WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP, 0, 0, 0, 0,
 				    tabWindow.handle, NULL, NULL, NULL);
 				editWindow.tabIndex = tabIndex;
@@ -870,10 +872,10 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 				// Create List Window
 				Win32Window listWindow = {};
-				listWindow.handle = CreateWindowExW(
-				    WS_EX_COMPOSITED | WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
+				listWindow.handle      = CreateWindowExW(
+				    WS_EX_COMPOSITED, L"LISTBOX", NULL,
 				    WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
-				        WS_HSCROLL | LBS_NOTIFY,
+				        WS_BORDER | WS_HSCROLL | LBS_NOTIFY,
 				    0, // x
 				    0, // y
 				    0, // width
@@ -903,13 +905,13 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    WS_EX_COMPOSITED,
 				    L"BUTTON",      // Predefined class; Unicode assumed
 				    L"Change Font", // Button text
-				    WS_TABSTOP | WS_CHILD | BS_DEFPUSHBUTTON, // Styles
-				    0,                                        // x position
-				    0,                                        // y position
-				    0,                                        // Button width
-				    0,                                        // Button height
-				    tabWindow.handle,                         // Parent window
-				    NULL,                                     // No menu.
+				    WS_TABSTOP | WS_CHILD | BS_FLAT, // Styles
+				    0,                               // x position
+				    0,                               // y position
+				    0,                               // Button width
+				    0,                               // Button height
+				    tabWindow.handle,                // Parent window
+				    NULL,                            // No menu.
 				    NULL,
 				    NULL); // Pointer not needed.
 				btnChangeFont.tabIndex = tabIndex;
@@ -920,15 +922,15 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				Win32Window textHotkeyWinjumpActivate = {};
 				textHotkeyWinjumpActivate.handle =
 				    CreateWindowExW(WS_EX_COMPOSITED,
-				                    L"STATIC",         // class name
-				                    L"Winjump Hotkey:", // no title (caption)
-				                    WS_CHILD,          // style
-				                    0, 0,              // position
-				                    0, 0,              // size
-				                    tabWindow.handle,  // parent window
-				                    NULL,              // uses class menu
-				                    NULL,              // instance
-				                    NULL);             // no WM_CREATE parameter
+				                    L"STATIC",            // class name
+				                    L"Winjump Hotkey:",   // no title (caption)
+				                    WS_CHILD, // style
+				                    0, 0,                 // position
+				                    0, 0,                 // size
+				                    tabWindow.handle,     // parent window
+				                    NULL,                 // uses class menu
+				                    NULL,                 // instance
+				                    NULL); // no WM_CREATE parameter
 				textHotkeyWinjumpActivate.tabIndex = tabIndex;
 				globalState.window[winjumpwindow_text_hotkey_winjump_activate] =
 				    textHotkeyWinjumpActivate;
@@ -940,8 +942,8 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				                    HOTKEY_CLASSW,       // class name
 				                    L"Activate Winjump", // no title (caption)
 				                    WS_CHILD,            // style
-				                    0, 0,              // position
-				                    0, 0,             // size
+				                    0, 0,                // position
+				                    0, 0,                // size
 				                    tabWindow.handle,    // parent window
 				                    NULL,                // uses class menu
 				                    NULL,                // instance
