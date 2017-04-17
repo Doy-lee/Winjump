@@ -3,6 +3,7 @@
 
 #include "dqn.h"
 
+// Returns length without null terminator, returns 0 if NULL
 FILE_SCOPE inline i32 wchar_strlen(const wchar_t *const a)
 {
 	i32 result = 0;

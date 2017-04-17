@@ -20,6 +20,7 @@
 // TODO(doyle): Safer subclassing?
 // https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
 
+#define WIN32_GUID_HOTKEY_ACTIVATE_APP 10983
 #define WIN32_UI_MARGIN 5
 #define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 FILE_SCOPE WinjumpState globalState;
@@ -156,7 +157,7 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 			// will show the black erased background because, I think,
 			// WM_PAINT's aren't being called but something else, so our
 			// FillRect is not being called.
-#if 0
+#if 1
 			return true;
 #else
 			return CallWindowProcW(win32Window->defaultProc, window, msg,
@@ -167,18 +168,40 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 
 		case WM_PAINT:
 		{
+#if 1
 			RECT clientRect;
 			GetClientRect(window, &clientRect);
 
 			PAINTSTRUCT paint = {};
 			HDC deviceContext = BeginPaint(window, &paint);
-			FillRect(deviceContext, &clientRect,
-			         GetSysColorBrush(COLOR_WINDOW));
-			CallWindowProcW(win32Window->defaultProc, window, WM_PAINT,
-			                (WPARAM)deviceContext, (LPARAM)0);
-			BitBlt(deviceContext, 0, 0, clientRect.right, clientRect.bottom,
-			       deviceContext, 0, 0, SRCCOPY);
+			{
+				LONG clientWidth, clientHeight;
+				dqn_win32_get_rect_dim(clientRect, &clientWidth, &clientHeight);
+
+				// TODO(doyle): It's possible to cache these so we don't
+				// recreate every frame.
+				HDC drawDC         = CreateCompatibleDC(deviceContext);
+				HBITMAP drawBitmap =
+				    CreateCompatibleBitmap(drawDC, clientWidth, clientHeight);
+				SelectObject(drawDC, drawBitmap);
+
+				// Fill bitmap with sys color, then wndproc will paint the data
+				// into the drawDc and then blit it out at once
+				FillRect(drawDC, &clientRect, GetSysColorBrush(COLOR_WINDOW));
+				CallWindowProcW(win32Window->defaultProc, window, WM_PAINT,
+				                (WPARAM)drawDC, (LPARAM)0);
+
+				BitBlt(deviceContext, 0, 0, clientWidth, clientHeight, drawDC,
+				       0, 0, SRCCOPY);
+
+				DeleteObject(drawDC);
+				DeleteObject(drawBitmap);
+			}
 			EndPaint(window, &paint);
+#else
+			return CallWindowProcW(win32Window->defaultProc, window, msg,
+			                       wParam, lParam);
+#endif
 		}
 		break;
 
@@ -193,7 +216,7 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 	return result;
 }
 
-FILE_SCOPE LRESULT CALLBACK win32_capture_enter_callback(HWND window,
+FILE_SCOPE LRESULT CALLBACK win32_edit_box_callback(HWND window,
                                                          UINT msg,
                                                          WPARAM wParam,
                                                          LPARAM lParam)
@@ -317,8 +340,8 @@ FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
                                           const bool ignoreHeight)
 {
 	HWND tab = globalState.window[winjumpwindow_tab].handle;
-	RECT tabDisplayRect;
-	TabCtrl_GetItemRect(tab, 0, &tabDisplayRect);
+	LONG tabOffsetY;
+	win32_tab_get_offset_to_content(tab, NULL, &tabOffsetY);
 
 	HWND editWindow =
 	    globalState.window[winjumpwindow_input_search_entries].handle;
@@ -329,16 +352,14 @@ FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
 	if (ignoreHeight) newHeight = origHeight;
 
 	// Resize the edit box that is used for filtering
-	DqnV2 editP =
-	    dqn_v2i(WIN32_UI_MARGIN, tabDisplayRect.bottom + WIN32_UI_MARGIN);
+	DqnV2 editP = dqn_v2i(WIN32_UI_MARGIN, tabOffsetY + WIN32_UI_MARGIN);
 	MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, newWidth, newHeight,
 	           TRUE);
 
 	// Resize the list window
 	{
 		LONG clientHeight;
-		dqn_win32_get_client_dim(globalState.window[winjumpwindow_tab].handle,
-		                         NULL, &clientHeight);
+		dqn_win32_get_client_dim(tab, NULL, &clientHeight);
 
 		HWND listWindow =
 		    state->window[winjumpwindow_list_program_entries].handle;
@@ -377,7 +398,9 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 		                         &newHeight);
 		ReleaseDC(editWindow, deviceContext);
 
-		newHeight = (LONG)(newHeight * 1.5f);
+		// TODO(doyle): Repated in WM_SIZE
+		const i32 MIN_SEARCH_HEIGHT = 18;
+		newHeight = DQN_MAX(MIN_SEARCH_HEIGHT, (LONG)(newHeight * 1.85f));
 		winjump_resize_search_box(&globalState, 0, newHeight, true, false);
 	}
 	else
@@ -386,6 +409,197 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 		                    NULL);
 	}
 }
+
+FILE_SCOPE inline i32
+winjump_apphotkey_to_win32_hkm_hotkey_modifier(enum AppHotkeyModifier modifier)
+{
+	u32 result = 0;
+
+	if (modifier == apphotkeymodifier_alt)
+	{
+		result = HOTKEYF_ALT;
+	}
+	else if (modifier == apphotkeymodifier_shift)
+	{
+		result = HOTKEYF_SHIFT;
+	}
+	else
+	{
+		DQN_ASSERT(modifier == apphotkeymodifier_ctrl);
+		result = HOTKEYF_CONTROL;
+	}
+
+	return result;
+}
+
+FILE_SCOPE inline enum AppHotkeyModifier
+winjump_win32_hkm_hotkey_modifier_to_apphotkey(i32 win32HkmHotkeyModifier)
+{
+	enum AppHotkeyModifier result;
+
+	if (win32HkmHotkeyModifier == HOTKEYF_ALT)
+	{
+		result = apphotkeymodifier_alt;
+	}
+	else if (win32HkmHotkeyModifier == HOTKEYF_SHIFT)
+	{
+		result = apphotkeymodifier_shift;
+	}
+	else
+	{
+		DQN_ASSERT(win32HkmHotkeyModifier == HOTKEYF_CONTROL);
+		result = apphotkeymodifier_ctrl;
+	}
+
+	return result;
+}
+
+
+FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
+    HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	Win32Window *win32Window =
+	    winjump_get_win32window_from_hwnd(&globalState, window);
+	DQN_ASSERT(win32Window);
+
+	LRESULT result = 0;
+	switch (msg)
+	{
+		case WM_PAINT:
+		{
+			AppHotkey *currHotkey = &globalState.appHotkey;
+			// NOTE: This is a bug in Windows. Hotkeys are incompatible with
+			// windows that have WS_EX_COMPOSITED causing a constant stream of
+			// messages and subsequently flickering.
+
+			// So we must override WM_PAINT and return 0.
+			// Draw the default border and control
+			DefWindowProcW(window, msg, wParam, lParam);
+
+			////////////////////////////////////////////////////////////////////
+			// Parse the hot-key
+			////////////////////////////////////////////////////////////////////
+			LRESULT newHotkey  = SendMessageW(window, HKM_GETHOTKEY, 0, 0);
+			char newVirtualKey = LOBYTE(LOWORD(newHotkey));
+			u8 newKeyModifier  = HIBYTE(LOWORD(newHotkey));
+
+			HWND client = globalState.window[winjumpwindow_main_client].handle;
+			char hotkeyString[32] = {};
+
+			bool newHotkeyRegisteredSuccessfully = false;
+			bool keyCombinationWasComplete       = false;
+
+			// This is a new candidate hotkey, let's use it
+			if (newVirtualKey >= 'A' && newVirtualKey <= 'Z' &&
+			    (newKeyModifier == HOTKEYF_ALT ||
+			     newKeyModifier == HOTKEYF_CONTROL ||
+			     newKeyModifier == HOTKEYF_SHIFT))
+			{
+				keyCombinationWasComplete = true;
+
+				currHotkey->virtualKey = newVirtualKey;
+				currHotkey->modifier =
+				    winjump_win32_hkm_hotkey_modifier_to_apphotkey(
+				        newKeyModifier);
+
+				// Convert to global hotkey defines
+				u32 rhkModifier = 0;
+				if (newKeyModifier == HOTKEYF_ALT)
+					rhkModifier = MOD_ALT;
+				else if (newKeyModifier == HOTKEYF_CONTROL)
+					rhkModifier = MOD_CONTROL;
+				else if (newKeyModifier == HOTKEYF_SHIFT)
+					rhkModifier = MOD_SHIFT;
+				DQN_ASSERT(rhkModifier != 0);
+
+				// Apply the new hotkey
+				UnregisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP);
+				if (RegisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP,
+				                   rhkModifier, currHotkey->virtualKey))
+				{
+					newHotkeyRegisteredSuccessfully = true;
+				}
+			}
+			else
+			{
+				// Otherwise, entered hotkey is not a complete combination yet,
+				// i.e. only modifier pressed, or only key pressed
+			}
+
+			///////////////////////////////////////////////////////////////////
+			// Draw Hotkey + Caret
+			///////////////////////////////////////////////////////////////////
+			char *stringPtr             = hotkeyString;
+			i32 currHotkeyWin32Modifier = winjump_apphotkey_to_win32_hkm_hotkey_modifier(currHotkey->modifier);
+
+			if (currHotkeyWin32Modifier & HOTKEYF_ALT)
+				stringPtr += dqn_sprintf(stringPtr, "%s", "Alt-");
+
+			if (currHotkeyWin32Modifier & HOTKEYF_CONTROL)
+				stringPtr += dqn_sprintf(hotkeyString, "%s", "Ctrl-");
+
+			if (currHotkeyWin32Modifier & HOTKEYF_SHIFT)
+				stringPtr += dqn_sprintf(hotkeyString, "%s", "Shift-");
+
+			dqn_sprintf(stringPtr, "%c", currHotkey->virtualKey);
+
+			RECT rect;
+			GetClientRect(window, &rect);
+			rect.left += 2;
+
+			HDC deviceContext = GetDC(window);
+
+			LONG stringWidth, stringHeight;
+			win32_font_calculate_dim(deviceContext, globalState.font,
+			                         hotkeyString, &stringWidth, &stringHeight);
+			rect.right = rect.left + stringWidth;
+
+			SelectObject(deviceContext, globalState.font);
+			DrawText(deviceContext, hotkeyString, -1, &rect, DT_VCENTER | DT_SINGLELINE);
+
+			const i32 NUDGE_X = 1;
+			SetCaretPos(rect.right + NUDGE_X, rect.bottom - stringHeight - (i32)(0.25f * stringHeight));
+			ReleaseDC(window, deviceContext);
+
+			///////////////////////////////////////////////////////////////////
+			// Update ui prompts and window title
+			///////////////////////////////////////////////////////////////////
+			if (keyCombinationWasComplete)
+			{
+				HWND textValidHotkey =
+				    globalState.window[winjumpwindow_text_hotkey_is_valid]
+				        .handle;
+				if (newHotkeyRegisteredSuccessfully)
+				{
+					char newWindowTitle[256] = {};
+					dqn_sprintf(newWindowTitle,
+					            "Winjump | Press %s to activate Winjump",
+					            hotkeyString);
+					SetWindowText(client, newWindowTitle);
+					SetWindowText(textValidHotkey,
+					              "Hotkey is vacant and valid");
+				}
+				else
+				{
+					SetWindowText(client, "Winjump | No valid hotkey set");
+					SetWindowText(textValidHotkey,
+					              "Hotkey is in used and not valid");
+				}
+			}
+
+			return 0;
+		}
+		break;
+
+		default:
+		{
+			return CallWindowProcW(win32Window->defaultProc, window, msg,
+			                       wParam, lParam);
+		}
+		break;
+	}
+}
+
 FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
                                                     WPARAM wParam,
                                                     LPARAM lParam)
@@ -484,6 +698,8 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 			// HIWORD(wParam) = 0
 			// LOWORD(wParam) = MenuID
 			// lParam         = 0
+			return CallWindowProcW(win32Window->defaultProc, window, msg,
+			                       wParam, lParam);
 		}
 		break;
 
@@ -495,6 +711,49 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 	}
 
 	return result;
+}
+
+FILE_SCOPE void win32_tab_options_resize_windows(WinjumpState *state)
+{
+	HWND tab            = state->window[winjumpwindow_tab].handle;
+	LONG contentOffsetY = 0;
+	win32_tab_get_offset_to_content(tab, NULL, &contentOffsetY);
+
+	LONG tabWidth;
+	dqn_win32_get_client_dim(tab, &tabWidth, NULL);
+	DqnV2 btnDim = dqn_v2(100, 30);
+
+	// Position the set hotkey label
+	LONG fontHeight   = 0;
+	HDC deviceContext = GetDC(tab);
+	win32_font_calculate_dim(deviceContext, globalState.font,
+	                         WINJUMP_STRING_TO_CALC_HEIGHT, NULL, &fontHeight);
+	ReleaseDC(tab, deviceContext);
+
+	HWND hotkeyActivateLabel = state->window[winjumpwindow_text_hotkey_winjump_activate].handle;
+	DqnV2 textHotkeyP        = dqn_v2i(WIN32_UI_MARGIN, WIN32_UI_MARGIN + contentOffsetY);
+	DqnV2 textHotkeyDim      = dqn_v2i(tabWidth - WIN32_UI_MARGIN, fontHeight + WIN32_UI_MARGIN);
+	MoveWindow(hotkeyActivateLabel, (i32)textHotkeyP.x, (i32)textHotkeyP.y,
+	          (i32)textHotkeyDim.w, (i32)textHotkeyDim.h, true);
+
+	// Position the hotkey control
+	HWND hotkeyActivate = state->window[winjumpwindow_hotkey_winjump_activate].handle;
+	DqnV2 hotkeyP       = dqn_v2(textHotkeyP.x, textHotkeyP.y + textHotkeyDim.h + WIN32_UI_MARGIN);
+	MoveWindow(hotkeyActivate, (i32)hotkeyP.x, (i32)hotkeyP.y, (i32)btnDim.w, (i32)btnDim.h, true);
+
+	// Position the hotkey is valid text next to the hotkey control
+	{
+		HWND text = state->window[winjumpwindow_text_hotkey_is_valid].handle;
+		DqnV2 dim = dqn_v2(textHotkeyDim.w, btnDim.h);
+		DqnV2 p   = dqn_v2(hotkeyP.x + btnDim.x + WIN32_UI_MARGIN, hotkeyP.y + (dim.h * 0.25f));
+		MoveWindow(text, (i32)p.x, (i32)p.y, (i32)dim.w, (i32)dim.h, true);
+	}
+
+	// Position the change font button
+	HWND btnChangeFont = state->window[winjumpwindow_btn_change_font].handle;
+	DqnV2 btnP = dqn_v2(hotkeyP.x, hotkeyP.y + btnDim.h + WIN32_UI_MARGIN);
+	MoveWindow(btnChangeFont, (i32)btnP.x, (i32)btnP.y, (i32)btnDim.w, (i32)btnDim.h, TRUE);
+
 }
 
 FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
@@ -533,7 +792,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			                               (LONG_PTR)win32_tab_ctrl_callback);
 			globalState.window[winjumpwindow_tab] = tabWindow;
 
-			// Add first tab
+			////////////////////////////////////////////////////////////////////
+			// Create 1st Tab Window
+			////////////////////////////////////////////////////////////////////
 			{
 				TCITEM tabControlItem  = {};
 				tabControlItem.mask    = TCIF_TEXT;
@@ -542,9 +803,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    tabWindow.handle, TabCtrl_GetItemCount(tabWindow.handle),
 				    &tabControlItem);
 
-				////////////////////////////////////////////////////////////////////
 				// Create Edit Window
-				////////////////////////////////////////////////////////////////////
 				Win32Window editWindow = {};
 				editWindow.handle      = CreateWindowExW(
 				    WS_EX_COMPOSITED | WS_EX_CLIENTEDGE, L"EDIT", NULL,
@@ -552,15 +811,13 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    tabWindow.handle, NULL, NULL, NULL);
 				editWindow.tabIndex = tabIndex;
 				editWindow.defaultProc =
-			 	    (WNDPROC)SetWindowLongPtrW(editWindow.handle, GWLP_WNDPROC, (LONG_PTR)win32_capture_enter_callback);
+			 	    (WNDPROC)SetWindowLongPtrW(editWindow.handle, GWLP_WNDPROC, (LONG_PTR)win32_edit_box_callback);
 
 				globalState.window[winjumpwindow_input_search_entries] =
 				    editWindow;
 				SetFocus(editWindow.handle);
 
-				////////////////////////////////////////////////////////////////////
 				// Create List Window
-				////////////////////////////////////////////////////////////////////
 				Win32Window listWindow = {};
 				listWindow.handle = CreateWindowExW(
 				    WS_EX_COMPOSITED | WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
@@ -578,7 +835,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    listWindow;
 			}
 
-			// Create 2nd tab, options
+			////////////////////////////////////////////////////////////////////
+			// Create 2nd Tab Window
+			////////////////////////////////////////////////////////////////////
 			{
 				TCITEM tabControlItem  = {};
 				tabControlItem.mask    = TCIF_TEXT;
@@ -587,9 +846,10 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    tabWindow.handle, TabCtrl_GetItemCount(tabWindow.handle),
 				    &tabControlItem);
 
+				// Create change font btn
 				Win32Window btnChangeFont = {};
 				btnChangeFont.handle      = CreateWindowExW(
-				    NULL,
+				    WS_EX_COMPOSITED,
 				    L"BUTTON",      // Predefined class; Unicode assumed
 				    L"Change Font", // Button text
 				    WS_TABSTOP | WS_CHILD | BS_DEFPUSHBUTTON, // Styles
@@ -604,6 +864,63 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				btnChangeFont.tabIndex = tabIndex;
 				globalState.window[winjumpwindow_btn_change_font] =
 				    btnChangeFont;
+
+				// Create change activation hotkey is valid static text
+				Win32Window textHotkeyWinjumpActivate = {};
+				textHotkeyWinjumpActivate.handle =
+				    CreateWindowExW(WS_EX_COMPOSITED,
+				                    L"STATIC",         // class name
+				                    L"Winjump Hotkey:", // no title (caption)
+				                    WS_CHILD,          // style
+				                    0, 0,              // position
+				                    0, 0,              // size
+				                    tabWindow.handle,  // parent window
+				                    NULL,              // uses class menu
+				                    NULL,              // instance
+				                    NULL);             // no WM_CREATE parameter
+				textHotkeyWinjumpActivate.tabIndex = tabIndex;
+				globalState.window[winjumpwindow_text_hotkey_winjump_activate] =
+				    textHotkeyWinjumpActivate;
+
+				// Create change activation hotkey
+				Win32Window hotkeyWinjumpActivate = {};
+				hotkeyWinjumpActivate.handle =
+				    CreateWindowExW(WS_EX_COMPOSITED,
+				                    HOTKEY_CLASSW,       // class name
+				                    L"Activate Winjump", // no title (caption)
+				                    WS_CHILD,            // style
+				                    0, 0,              // position
+				                    0, 0,             // size
+				                    tabWindow.handle,    // parent window
+				                    NULL,                // uses class menu
+				                    NULL,                // instance
+				                    NULL); // no WM_CREATE parameter
+				SendMessageW(hotkeyWinjumpActivate.handle, HKM_SETRULES,
+				             HKCOMB_NONE, 0);
+
+				hotkeyWinjumpActivate.tabIndex = tabIndex;
+				hotkeyWinjumpActivate.defaultProc = (WNDPROC)SetWindowLongPtrW(
+				    hotkeyWinjumpActivate.handle, GWLP_WNDPROC,
+				    (LONG_PTR)win32_hotkey_winjump_activate_callback);
+				globalState.window[winjumpwindow_hotkey_winjump_activate] =
+				    hotkeyWinjumpActivate;
+
+				// Create change activation hotkey is valid static text
+				Win32Window textHotkeyIsValid = {};
+				textHotkeyIsValid.handle      = CreateWindowExW(
+				    WS_EX_COMPOSITED,
+				    L"STATIC",                     // class name
+				    NULL , // no title (caption)
+				    WS_CHILD,                      // style
+				    0, 0,                          // position
+				    0, 0,                          // size
+				    tabWindow.handle,              // parent window
+				    NULL,                          // uses class menu
+				    NULL,                          // instance
+				    NULL);                         // no WM_CREATE parameter
+				textHotkeyIsValid.tabIndex = tabIndex;
+				globalState.window[winjumpwindow_text_hotkey_is_valid] =
+				    textHotkeyIsValid;
 			}
 
 			////////////////////////////////////////////////////////////////////
@@ -632,7 +949,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 #ifdef WINJUMP_DEBUG_MODE
 			for (i32 i = 0; i < DQN_ARRAY_COUNT(globalState.window); i++)
+			{
 				DQN_ASSERT(globalState.window[i].handle);
+			}
 #endif
 		}
 		break;
@@ -762,17 +1081,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			////////////////////////////////////////////////////////////////////
 			// Adjust the options tab elements
 			////////////////////////////////////////////////////////////////////
-			{
-				HWND btnChangeFont =
-				    globalState.window[winjumpwindow_btn_change_font].handle;
-				DqnV2 btnDim = dqn_v2(100, 100);
-
-				LONG offsetY = 0;
-				win32_tab_get_offset_to_content(tab, NULL, &offsetY);
-				MoveWindow(btnChangeFont, WIN32_UI_MARGIN,
-				           WIN32_UI_MARGIN + offsetY, (i32)btnDim.w,
-				           (i32)btnDim.h, TRUE);
-			}
+			win32_tab_options_resize_windows(&globalState);
 
 			result = DefWindowProcW(window, msg, wParam, lParam);
 		}
@@ -1133,7 +1442,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	r.right  = 450;
 	r.bottom = 200;
 
-	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPSIBLINGS;
+	DWORD windowStyle =
+	    WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
 	AdjustWindowRect(&r, windowStyle, true);
 
 	globalRunning           = true;
@@ -1164,8 +1474,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	}
 
 
-#define GUID_HOTKEY_ACTIVATE_APP 10983
-	RegisterHotKey(mainWindow, GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
+	RegisterHotKey(mainWindow, WIN32_GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
 
 	////////////////////////////////////////////////////////////////////////////
 	// Read Configuration if Exist

@@ -31,6 +31,9 @@ enum WinjumpWindows
 	winjumpwindow_main_client,
 	winjumpwindow_tab,
 	winjumpwindow_btn_change_font,
+	winjumpwindow_text_hotkey_is_valid,
+	winjumpwindow_text_hotkey_winjump_activate,
+	winjumpwindow_hotkey_winjump_activate,
 	winjumpwindow_list_program_entries,
 	winjumpwindow_input_search_entries,
 	winjumpwindow_status_bar,
@@ -47,6 +50,19 @@ typedef struct Win32Window
 	WNDPROC defaultProc;
 } Win32Window;
 
+enum AppHotkeyModifier
+{
+	apphotkeymodifier_alt,
+	apphotkeymodifier_shift,
+	apphotkeymodifier_ctrl,
+};
+
+typedef struct AppHotkey
+{
+	char virtualKey                 = 'K';
+	enum AppHotkeyModifier modifier = apphotkeymodifier_alt;
+} AppHotkey;
+
 typedef struct WinjumpState
 {
 	HFONT   font;
@@ -57,8 +73,9 @@ typedef struct WinjumpState
 
 	bool isFilteringResults;
 	bool configIsStale;
-
 	i32  searchStringLen;
+
+	AppHotkey appHotkey;
 } WinjumpState;
 
 #endif /* WINJUMP_H */

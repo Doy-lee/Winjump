@@ -378,6 +378,7 @@ DQN_FILE_SCOPE bool dqn_win32_utf8_to_wchar (const char *const in, wchar_t *cons
 DQN_FILE_SCOPE bool dqn_win32_wchar_to_utf8 (const wchar_t *const in, char *const out, const i32 outLen);
 
 DQN_FILE_SCOPE void dqn_win32_get_client_dim    (const HWND window, LONG *width, LONG *height);
+DQN_FILE_SCOPE void dqn_win32_get_rect_dim      (RECT rect, LONG *width, LONG *height);
 DQN_FILE_SCOPE void dqn_win32_display_last_error(const char *const errorPrefix);
 #endif /* DQN_WIN32 */
 
@@ -1846,6 +1847,12 @@ DQN_FILE_SCOPE void dqn_win32_get_client_dim(const HWND window, LONG *width,
 {
 	RECT rect;
 	GetClientRect(window, &rect);
+	if (width)  *width  = rect.right - rect.left;
+	if (height) *height = rect.bottom - rect.top;
+}
+
+DQN_FILE_SCOPE void dqn_win32_get_rect_dim(RECT rect, LONG *width, LONG *height)
+{
 	if (width)  *width  = rect.right - rect.left;
 	if (height) *height = rect.bottom - rect.top;
 }
