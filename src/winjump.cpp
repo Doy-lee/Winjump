@@ -20,7 +20,8 @@
 // TODO(doyle): Safer subclassing?
 // https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
 
-#define WIN32_GUID_HOTKEY_ACTIVATE_APP 10983
+// TODO(doyle): Switch to listview so its easier to put app icons in for faster list recognition
+
 #define WIN32_UI_MARGIN 5
 #define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 FILE_SCOPE WinjumpState globalState;
@@ -432,6 +433,29 @@ winjump_apphotkey_to_win32_hkm_hotkey_modifier(enum AppHotkeyModifier modifier)
 	return result;
 }
 
+FILE_SCOPE inline i32
+winjump_apphotkey_to_win32_mod_hotkey_modifier(enum AppHotkeyModifier modifier)
+{
+	u32 result = 0;
+
+	if (modifier == apphotkeymodifier_alt)
+	{
+		result = MOD_ALT;
+	}
+	else if (modifier == apphotkeymodifier_shift)
+	{
+		result = MOD_SHIFT;
+	}
+	else
+	{
+		DQN_ASSERT(modifier == apphotkeymodifier_ctrl);
+		result = MOD_CONTROL;
+	}
+
+	return result;
+}
+
+
 FILE_SCOPE inline enum AppHotkeyModifier
 winjump_win32_hkm_hotkey_modifier_to_apphotkey(i32 win32HkmHotkeyModifier)
 {
@@ -454,6 +478,29 @@ winjump_win32_hkm_hotkey_modifier_to_apphotkey(i32 win32HkmHotkeyModifier)
 	return result;
 }
 
+// Returns the len of the buffer used
+u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf, u32 bufSize)
+{
+	if (!buf) return 0;
+
+	char *stringPtr = buf;
+
+	if (hotkey.modifier == apphotkeymodifier_alt)
+		stringPtr += dqn_sprintf(stringPtr, "%s", "Alt-");
+
+	if (hotkey.modifier == apphotkeymodifier_ctrl)
+		stringPtr += dqn_sprintf(stringPtr, "%s", "Ctrl-");
+
+	if (hotkey.modifier == apphotkeymodifier_shift)
+		stringPtr += dqn_sprintf(stringPtr, "%s", "Shift-");
+
+	dqn_sprintf(stringPtr, "%c", hotkey.virtualKey);
+
+	u32 len = (stringPtr - buf) + 1;
+	DQN_ASSERT(len < bufSize);
+
+	return len;
+}
 
 FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
     HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -484,11 +531,13 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 			u8 newKeyModifier  = HIBYTE(LOWORD(newHotkey));
 
 			HWND client = globalState.window[winjumpwindow_main_client].handle;
-			char hotkeyString[32] = {};
 
 			bool newHotkeyRegisteredSuccessfully = false;
 			bool keyCombinationWasComplete       = false;
 
+			i32 currHotkeyWin32Modifier =
+			    winjump_apphotkey_to_win32_hkm_hotkey_modifier(
+			        currHotkey->modifier);
 			// This is a new candidate hotkey, let's use it
 			if (newVirtualKey >= 'A' && newVirtualKey <= 'Z' &&
 			    (newKeyModifier == HOTKEYF_ALT ||
@@ -497,27 +546,39 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 			{
 				keyCombinationWasComplete = true;
 
-				currHotkey->virtualKey = newVirtualKey;
-				currHotkey->modifier =
-				    winjump_win32_hkm_hotkey_modifier_to_apphotkey(
-				        newKeyModifier);
-
-				// Convert to global hotkey defines
-				u32 rhkModifier = 0;
-				if (newKeyModifier == HOTKEYF_ALT)
-					rhkModifier = MOD_ALT;
-				else if (newKeyModifier == HOTKEYF_CONTROL)
-					rhkModifier = MOD_CONTROL;
-				else if (newKeyModifier == HOTKEYF_SHIFT)
-					rhkModifier = MOD_SHIFT;
-				DQN_ASSERT(rhkModifier != 0);
-
-				// Apply the new hotkey
-				UnregisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP);
-				if (RegisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP,
-				                   rhkModifier, currHotkey->virtualKey))
+				if (currHotkey->virtualKey == newVirtualKey &&
+				    currHotkeyWin32Modifier == newKeyModifier)
 				{
+					// User has entered the same one, mark it as already
+					// registered and skip. We also don't mark the config stale
+					// if it isn't already.
 					newHotkeyRegisteredSuccessfully = true;
+				}
+				else
+				{
+					currHotkey->virtualKey = newVirtualKey;
+					currHotkey->modifier =
+					    winjump_win32_hkm_hotkey_modifier_to_apphotkey(
+					        newKeyModifier);
+
+					// Convert to global hotkey defines
+					u32 rhkModifier = 0;
+					if (newKeyModifier == HOTKEYF_ALT)
+						rhkModifier = MOD_ALT;
+					else if (newKeyModifier == HOTKEYF_CONTROL)
+						rhkModifier = MOD_CONTROL;
+					else if (newKeyModifier == HOTKEYF_SHIFT)
+						rhkModifier = MOD_SHIFT;
+					DQN_ASSERT(rhkModifier != 0);
+
+					// Apply the new hotkey
+					UnregisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP);
+					if (RegisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP,
+					                   rhkModifier, currHotkey->virtualKey))
+					{
+						newHotkeyRegisteredSuccessfully = true;
+						globalState.configIsStale       = true;
+					}
 				}
 			}
 			else
@@ -529,19 +590,9 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 			///////////////////////////////////////////////////////////////////
 			// Draw Hotkey + Caret
 			///////////////////////////////////////////////////////////////////
-			char *stringPtr             = hotkeyString;
-			i32 currHotkeyWin32Modifier = winjump_apphotkey_to_win32_hkm_hotkey_modifier(currHotkey->modifier);
-
-			if (currHotkeyWin32Modifier & HOTKEYF_ALT)
-				stringPtr += dqn_sprintf(stringPtr, "%s", "Alt-");
-
-			if (currHotkeyWin32Modifier & HOTKEYF_CONTROL)
-				stringPtr += dqn_sprintf(hotkeyString, "%s", "Ctrl-");
-
-			if (currHotkeyWin32Modifier & HOTKEYF_SHIFT)
-				stringPtr += dqn_sprintf(hotkeyString, "%s", "Shift-");
-
-			dqn_sprintf(stringPtr, "%c", currHotkey->virtualKey);
+			char hotkeyString[32] = {};
+			winjump_hotkey_to_string(*currHotkey, hotkeyString,
+			                         DQN_ARRAY_COUNT(hotkeyString));
 
 			RECT rect;
 			GetClientRect(window, &rect);
@@ -581,7 +632,7 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 				}
 				else
 				{
-					SetWindowText(client, "Winjump | No valid hotkey set");
+					SetWindowText(client, CONFIG_GLOBAL_STRING_INVALID_HOTKEY);
 					SetWindowText(textValidHotkey,
 					              "Hotkey is in used and not valid");
 				}
@@ -1473,8 +1524,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		return -1;
 	}
 
-
-	RegisterHotKey(mainWindow, WIN32_GUID_HOTKEY_ACTIVATE_APP, MOD_ALT, 'K');
 
 	////////////////////////////////////////////////////////////////////////////
 	// Read Configuration if Exist

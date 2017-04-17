@@ -55,6 +55,7 @@ enum AppHotkeyModifier
 	apphotkeymodifier_alt,
 	apphotkeymodifier_shift,
 	apphotkeymodifier_ctrl,
+	apphotkeymodifier_count,
 };
 
 typedef struct AppHotkey
@@ -77,5 +78,7 @@ typedef struct WinjumpState
 
 	AppHotkey appHotkey;
 } WinjumpState;
+
+#define WIN32_GUID_HOTKEY_ACTIVATE_APP 10983
 
 #endif /* WINJUMP_H */

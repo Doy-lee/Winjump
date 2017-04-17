@@ -47,7 +47,8 @@ typedef float  f32;
 #define DQN_INVALID_CODE_PATH 0
 #define DQN_ARRAY_COUNT(array) (sizeof(array) / sizeof(array[0]))
 #define DQN_ASSERT(expr) if (!(expr)) { (*((i32 *)0)) = 0; }
-
+#define DQN_CLAMP(x, min, max)      if (x < min) { x = min; } \
+                               else if (x > max) { x = max; }
 #define DQN_PI 3.14159265359f
 #define DQN_ABS(x) (((x) < 0) ? (-(x)) : (x))
 #define DQN_DEGREES_TO_RADIANS(x) ((x * (DQN_PI / 180.0f)))
@@ -349,6 +350,8 @@ DQN_FILE_SCOPE bool    dqn_rect_contains_p (DqnRect rect, DqnV2 p);
 ////////////////////////////////////////////////////////////////////////////////
 // String Ops
 ////////////////////////////////////////////////////////////////////////////////
+DQN_FILE_SCOPE char  dqn_char_to_upper   (char c);
+DQN_FILE_SCOPE char  dqn_char_to_lower   (char c);
 DQN_FILE_SCOPE bool  dqn_char_is_digit   (char c);
 DQN_FILE_SCOPE bool  dqn_char_is_alpha   (char c);
 DQN_FILE_SCOPE bool  dqn_char_is_alphanum(char c);
@@ -1503,19 +1506,42 @@ DQN_FILE_SCOPE inline bool dqn_rect_contains_p(DqnRect rect, DqnV2 p)
 ////////////////////////////////////////////////////////////////////////////////
 // String Operations
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE bool dqn_char_is_digit(char c)
+DQN_FILE_SCOPE inline char dqn_char_to_lower(char c)
+{
+	if (c >= 'A' && c <= 'Z')
+	{
+		i32 shiftOffset = 'a' - 'A';
+		return (c + (char)shiftOffset);
+	}
+
+	return c;
+}
+
+DQN_FILE_SCOPE inline char dqn_char_to_upper(char c)
+{
+	if (c >= 'a' && c <= 'z')
+	{
+		i32 shiftOffset = 'a' - 'A';
+		return (c - (char)shiftOffset);
+	}
+
+	return c;
+}
+
+
+DQN_FILE_SCOPE inline bool dqn_char_is_digit(char c)
 {
 	if (c >= '0' && c <= '9') return true;
 	return false;
 }
 
-DQN_FILE_SCOPE bool dqn_char_is_alpha(char c)
+DQN_FILE_SCOPE inline bool dqn_char_is_alpha(char c)
 {
 	if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
 	return false;
 }
 
-DQN_FILE_SCOPE bool dqn_char_is_alphanum(char c)
+DQN_FILE_SCOPE inline bool dqn_char_is_alphanum(char c)
 {
 	if (dqn_char_is_alpha(c) || dqn_char_is_digit(c)) return true;
 	return false;

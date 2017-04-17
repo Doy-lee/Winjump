@@ -5,6 +5,9 @@
 #include "Winjump.h"
 #include "dqn.h"
 
+const char *const CONFIG_GLOBAL_STRING_INVALID_HOTKEY =
+    "Winjump | Hotkey is being used by another process";
+
 // Returns NULL if property not found, or if arguments are invalid
 FILE_SCOPE const char *
 config_ini_load_property_value_string(DqnIni *ini, const char *const property)
@@ -41,12 +44,15 @@ FILE_SCOPE bool config_ini_load_property_value_int(DqnIni *ini,
 
 	const char *propertyValue =
 	    config_ini_load_property_value_string(ini, property);
+	if (!propertyValue) return false;
+
 	*value = dqn_str_to_i32(propertyValue, dqn_strlen(propertyValue));
 
 	return true;
 }
 
-FILE_SCOPE const char *const GLOBAL_STRING_INI_CONFIG_PATH               = "winjump.ini";
+FILE_SCOPE const char *const GLOBAL_STRING_INI_CONFIG_PATH = "winjump.ini";
+
 FILE_SCOPE const char *const GLOBAL_STRING_INI_FONT_NAME             = "FontName";
 FILE_SCOPE const char *const GLOBAL_STRING_INI_FONT_WEIGHT           = "FontWeight";
 FILE_SCOPE const char *const GLOBAL_STRING_INI_FONT_HEIGHT           = "FontHeight";
@@ -56,6 +62,9 @@ FILE_SCOPE const char *const GLOBAL_STRING_INI_FONT_CHAR_SET         = "FontChar
 FILE_SCOPE const char *const GLOBAL_STRING_INI_FONT_OUT_PRECISION    = "FontOutPrecision";
 FILE_SCOPE const char *const GLOBAL_STRING_INI_FONT_CLIP_PRECISION   = "FontClipPrecision";
 FILE_SCOPE const char *const GLOBAL_STRING_INI_FONT_QUALITY          = "FontQuality";
+
+FILE_SCOPE const char *const GLOBAL_STRING_INI_HOTKEY_VIRTUAL_KEY = "HotkeyVirtualKey";
+FILE_SCOPE const char *const GLOBAL_STRING_INI_HOTKEY_MODIFIER    = "HotkeyModifier";
 
 HFONT config_read_from_disk(WinjumpState *state)
 {
@@ -72,24 +81,32 @@ HFONT config_read_from_disk(WinjumpState *state)
 		return NULL;
 	}
 
-	u8 *data = (u8 *)calloc(1, (size_t)config.size);
-
-	if (!data)
+	////////////////////////////////////////////////////////////////////////////
+	// Create ini intermediate representation
+	////////////////////////////////////////////////////////////////////////////
+	DqnIni *ini = NULL;
 	{
+		u8 *data = (u8 *)calloc(1, (size_t)config.size);
+
+		if (!data)
+		{
+			dqn_file_close(&config);
+			OutputDebugString(
+			    "calloc() failed: Not enough memory. Continuing without "
+			    "configuration file.");
+			return NULL;
+		}
+
+		// Read data to intermediate format
+		dqn_file_read(config, data, (u32)config.size);
 		dqn_file_close(&config);
-		OutputDebugString(
-		    "calloc() failed: Not enough memory. Continuing without "
-		    "configuration file.");
-		return NULL;
+		ini = dqn_ini_load((char *)data, NULL);
+		free(data);
 	}
 
-	// Read data to intermediate format
-	dqn_file_read(config, data, (u32)config.size);
-	dqn_file_close(&config);
-	DqnIni *ini = dqn_ini_load((char *)data, NULL);
-	free(data);
-
+	////////////////////////////////////////////////////////////////////////////
 	// Start parsing to recreate font from config file
+	////////////////////////////////////////////////////////////////////////////
 	HFONT font = NULL;
 	{
 		// NOTE: If font name is not found, this will return NULL and CreateFont
@@ -107,41 +124,79 @@ HFONT config_read_from_disk(WinjumpState *state)
 		i32 fontClipPrecision  = 0;
 		i32 fontQuality        = 0;
 
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_HEIGHT, &fontHeight);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_HEIGHT, &fontHeight);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_WEIGHT, &fontWeight);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_ITALIC, &fontItalic);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_PITCH_AND_FAMILY, &fontPitchAndFamily);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_CHAR_SET, &fontCharSet);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_OUT_PRECISION, &fontOutPrecision);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_CLIP_PRECISION, &fontClipPrecision);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_FONT_QUALITY, &fontQuality);
+
 		if (fontHeight > 0) fontHeight = -fontHeight;
-
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_WEIGHT, &fontWeight);
-
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_ITALIC, &fontItalic);
-		i32 isItalic = (fontItalic > 0) ? 255 : 0;
-
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_PITCH_AND_FAMILY,
-		    &fontPitchAndFamily);
-
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_CHAR_SET, &fontCharSet);
-		i32 isCharSet = (fontCharSet > 0) ? 255 : 0;
-
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_OUT_PRECISION,
-		    &fontOutPrecision);
-
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_CLIP_PRECISION,
-		    &fontClipPrecision);
-
-		config_ini_load_property_value_int(
-		    ini, GLOBAL_STRING_INI_FONT_QUALITY, &fontQuality);
+		i32 isItalic                   = (fontItalic > 0) ? 255 : 0;
+		i32 isCharSet                  = (fontCharSet > 0) ? 255 : 0;
 
 		// Load font from configuration
 		font = CreateFont(fontHeight, 0, 0, 0, fontWeight, isItalic, 0, 0,
 		                  isCharSet, fontOutPrecision, fontClipPrecision,
 		                  fontQuality, fontPitchAndFamily, fontName);
 	}
+
+	////////////////////////////////////////////////////////////////////////////
+	// Parse the hotkey out
+	////////////////////////////////////////////////////////////////////////////
+	// TODO(doyle): Look at making this function return some platform
+	// independent struct and then convert it to Win32 data in the platform.
+	{
+		AppHotkey newHotkey = {};
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_HOTKEY_VIRTUAL_KEY, &(i32)newHotkey.virtualKey);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_HOTKEY_MODIFIER,    &(i32)newHotkey.modifier);
+
+		// Validate the loaded values
+		{
+			newHotkey.virtualKey = dqn_char_to_upper(newHotkey.virtualKey);
+			if ((newHotkey.virtualKey >= 'A' || newHotkey.virtualKey <= 'Z') &&
+			    (newHotkey.modifier >= 0 &&
+			     newHotkey.modifier < apphotkeymodifier_count))
+			{
+				// Valid key
+			}
+			else
+			{
+				// Out of range, invalid hotkey, revert to default hotkey
+				AppHotkey defaultHotkey = {};
+				newHotkey               = defaultHotkey;
+				DQN_ASSERT(newHotkey.virtualKey == 'K');
+			}
+		}
+		state->appHotkey = newHotkey;
+
+		u32 win32ModKey =
+		    winjump_apphotkey_to_win32_mod_hotkey_modifier(newHotkey.modifier);
+		u32 win32VKey = newHotkey.virtualKey;
+
+		// Try registering the hotkey
+		HWND client = state->window[winjumpwindow_main_client].handle;
+		if (RegisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP, win32ModKey,
+		                   win32VKey))
+		{
+			char hotkeyString[32] = {};
+			winjump_hotkey_to_string(newHotkey, hotkeyString,
+			                         DQN_ARRAY_COUNT(hotkeyString));
+
+			char newWindowTitle[256] = {};
+			dqn_sprintf(newWindowTitle,
+			            "Winjump | Press %s to activate Winjump", hotkeyString);
+			SetWindowText(state->window[winjumpwindow_main_client].handle,
+			              newWindowTitle);
+		}
+		else
+		{
+			SetWindowText(client, CONFIG_GLOBAL_STRING_INVALID_HOTKEY);
+		}
+	}
+
 	dqn_ini_destroy(ini);
 
 	DQN_ASSERT(font);
@@ -279,28 +334,30 @@ void config_write_to_disk(WinjumpState *state)
 	}
 	DQN_ASSERT(ini);
 
+	////////////////////////////////////////////////////////////////////////////
+	// Write Font Data
+	////////////////////////////////////////////////////////////////////////////
 	if (!fontNameNotValid)
 	{
 		config_write_to_ini_string(
 		    ini, GLOBAL_STRING_INI_FONT_NAME, fontName);
 	}
 
-	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_HEIGHT,
-	                                fontHeight);
-	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_WEIGHT,
-	                                fontWeight);
-	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_ITALIC,
-	                                fontItalic);
-	config_write_to_ini_int(
-	    ini, GLOBAL_STRING_INI_FONT_PITCH_AND_FAMILY, fontPitchAndFamily);
-	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_CHAR_SET,
-	                                fontCharSet);
-	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_OUT_PRECISION,
-	                                fontOutPrecision);
-	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_CLIP_PRECISION,
-	                                fontClipPrecision);
-	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_QUALITY,
-	                                fontQuality);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_HEIGHT,           fontHeight);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_WEIGHT,           fontWeight);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_ITALIC,           fontItalic);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_PITCH_AND_FAMILY, fontPitchAndFamily);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_CHAR_SET,         fontCharSet);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_OUT_PRECISION,    fontOutPrecision);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_CLIP_PRECISION,   fontClipPrecision);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_FONT_QUALITY,          fontQuality);
+
+	////////////////////////////////////////////////////////////////////////////
+	// Write Global Hotkey Data
+	////////////////////////////////////////////////////////////////////////////
+	AppHotkey hotkey = globalState.appHotkey;
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_HOTKEY_VIRTUAL_KEY, hotkey.virtualKey);
+	config_write_to_ini_int(ini, GLOBAL_STRING_INI_HOTKEY_MODIFIER,    hotkey.modifier);
 
 	////////////////////////////////////////////////////////////////////////
 	// Write ini to disk
