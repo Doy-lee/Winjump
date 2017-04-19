@@ -19,13 +19,14 @@
 
 // TODO(doyle): Safer subclassing?
 // https://blogs.msdn.microsoft.com/oldnewthing/20031111-00/?p=41883/
-
 // TODO(doyle): Switch to listview so its easier to put app icons in for faster list recognition
+
 
 #define WIN32_UI_MARGIN 5
 #define WIN32_MAX_PROGRAM_TITLE DQN_ARRAY_COUNT(((Win32Program *)0)->title)
 FILE_SCOPE WinjumpState globalState;
 FILE_SCOPE bool         globalRunning;
+FILE_SCOPE bool         globalWindowIsInactive;
 
 // Returns length without null terminator, returns 0 if NULL
 
@@ -413,8 +414,8 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 	}
 }
 
-FILE_SCOPE inline i32
-winjump_apphotkey_to_win32_hkm_hotkey_modifier(enum AppHotkeyModifier modifier)
+u32 winjump_apphotkey_to_win32_hkm_hotkey_modifier(
+    enum AppHotkeyModifier modifier)
 {
 	u32 result = 0;
 
@@ -435,8 +436,8 @@ winjump_apphotkey_to_win32_hkm_hotkey_modifier(enum AppHotkeyModifier modifier)
 	return result;
 }
 
-FILE_SCOPE inline i32
-winjump_apphotkey_to_win32_mod_hotkey_modifier(enum AppHotkeyModifier modifier)
+u32 winjump_apphotkey_to_win32_mod_hotkey_modifier(
+    enum AppHotkeyModifier modifier)
 {
 	u32 result = 0;
 
@@ -457,8 +458,7 @@ winjump_apphotkey_to_win32_mod_hotkey_modifier(enum AppHotkeyModifier modifier)
 	return result;
 }
 
-
-FILE_SCOPE inline enum AppHotkeyModifier
+inline enum AppHotkeyModifier
 winjump_win32_hkm_hotkey_modifier_to_apphotkey(i32 win32HkmHotkeyModifier)
 {
 	enum AppHotkeyModifier result;
@@ -481,7 +481,8 @@ winjump_win32_hkm_hotkey_modifier_to_apphotkey(i32 win32HkmHotkeyModifier)
 }
 
 // Returns the len of the buffer used
-u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf, u32 bufSize)
+u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf,
+                                    u32 bufSize)
 {
 	if (!buf) return 0;
 
@@ -1006,6 +1007,13 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				DQN_ASSERT(globalState.window[i].handle);
 			}
 #endif
+		}
+		break;
+
+		case WM_ACTIVATE:
+		{
+			u32 activeState        = LOWORD(wParam);
+			globalWindowIsInactive = (activeState == WA_INACTIVE);
 		}
 		break;
 
@@ -1546,13 +1554,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	{
 		f64 startFrameTime = dqn_time_now_in_ms();
 
+		// NOTE: When window is inactive, GetMessage will suspend the process if
+		// there are no messages. But then once it gets activate it'll break out
+		// of the loop and continue as normal until window becomes inactive.
 		MSG msg;
+		while (globalWindowIsInactive)
+		{
+			BOOL result = GetMessageW(&msg, mainWindow, 0, 0);
+			if (result > 0)
+			{
+				TranslateMessage(&msg);
+				DispatchMessageW(&msg);
+			}
+		}
+
 		while (PeekMessageW(&msg, mainWindow, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 		}
-
 		winjump_update(&globalState);
 
 		////////////////////////////////////////////////////////////////////////

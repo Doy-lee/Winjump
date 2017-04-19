@@ -4,6 +4,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
+#include "Winjump.h"
+
 extern const char *const CONFIG_GLOBAL_STRING_INVALID_HOTKEY;
 
 typedef struct WinjumpState WinjumpState;

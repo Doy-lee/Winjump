@@ -81,4 +81,8 @@ typedef struct WinjumpState
 
 #define WIN32_GUID_HOTKEY_ACTIVATE_APP 10983
 
+u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf, u32 bufSize);
+u32 winjump_apphotkey_to_win32_hkm_hotkey_modifier(enum AppHotkeyModifier modifier);
+u32 winjump_apphotkey_to_win32_mod_hotkey_modifier(enum AppHotkeyModifier modifier);
+
 #endif /* WINJUMP_H */

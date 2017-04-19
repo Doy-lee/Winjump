@@ -150,8 +150,8 @@ HFONT config_read_from_disk(WinjumpState *state)
 	// independent struct and then convert it to Win32 data in the platform.
 	{
 		AppHotkey newHotkey = {};
-		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_HOTKEY_VIRTUAL_KEY, &(i32)newHotkey.virtualKey);
-		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_HOTKEY_MODIFIER,    &(i32)newHotkey.modifier);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_HOTKEY_VIRTUAL_KEY, (i32 *)&newHotkey.virtualKey);
+		config_ini_load_property_value_int(ini, GLOBAL_STRING_INI_HOTKEY_MODIFIER,    (i32 *)&newHotkey.modifier);
 
 		// Validate the loaded values
 		{
@@ -355,7 +355,7 @@ void config_write_to_disk(WinjumpState *state)
 	////////////////////////////////////////////////////////////////////////////
 	// Write Global Hotkey Data
 	////////////////////////////////////////////////////////////////////////////
-	AppHotkey hotkey = globalState.appHotkey;
+	AppHotkey hotkey = state->appHotkey;
 	config_write_to_ini_int(ini, GLOBAL_STRING_INI_HOTKEY_VIRTUAL_KEY, hotkey.virtualKey);
 	config_write_to_ini_int(ini, GLOBAL_STRING_INI_HOTKEY_MODIFIER,    hotkey.modifier);
 

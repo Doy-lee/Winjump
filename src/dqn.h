@@ -44,12 +44,17 @@ typedef int64_t i16;
 typedef double f64;
 typedef float  f32;
 
+#define DQN_TERABYTE(val) (DQN_GIGABYTE(val) * 1024LL)
+#define DQN_GIGABYTE(val) (DQN_MEGABYTE(val) * 1024LL)
+#define DQN_MEGABYTE(val) (DQN_KILOBYTE(val) * 1024LL)
+#define DQN_KILOBYTE(val) ((val) * 1024LL)
+
 #define DQN_INVALID_CODE_PATH 0
 #define DQN_ARRAY_COUNT(array) (sizeof(array) / sizeof(array[0]))
 #define DQN_ASSERT(expr) if (!(expr)) { (*((i32 *)0)) = 0; }
-#define DQN_CLAMP(x, min, max)      if (x < min) { x = min; } \
-                               else if (x > max) { x = max; }
+
 #define DQN_PI 3.14159265359f
+
 #define DQN_ABS(x) (((x) < 0) ? (-(x)) : (x))
 #define DQN_DEGREES_TO_RADIANS(x) ((x * (DQN_PI / 180.0f)))
 #define DQN_RADIANS_TO_DEGREES(x) ((x * (180.0f / DQN_PI)))
@@ -95,7 +100,8 @@ bool dqn_array_init(DqnArray<T> *array, size_t capacity)
 		if (!dqn_array_free(array)) return false;
 	}
 
-	array->data     = (T *)calloc((size_t)capacity, sizeof(T));
+	array->data =
+	    (T *)dqn_mem_alloc_internal((size_t)capacity * sizeof(T), true);
 	if (!array->data) return false;
 
 	array->count    = 0;
@@ -112,7 +118,8 @@ bool dqn_array_grow(DqnArray<T> *array)
 	size_t newCapacity         = (size_t)(array->capacity * GROWTH_FACTOR);
 	if (newCapacity == array->capacity) newCapacity++;
 
-	T *newMem = (T *)realloc(array->data, (size_t)(newCapacity * sizeof(T)));
+	T *newMem = (T *)dqn_mem_realloc_internal(
+	    array->data, (size_t)(newCapacity * sizeof(T)));
 	if (newMem)
 	{
 		array->data     = newMem;
@@ -350,22 +357,26 @@ DQN_FILE_SCOPE bool    dqn_rect_contains_p (DqnRect rect, DqnV2 p);
 ////////////////////////////////////////////////////////////////////////////////
 // String Ops
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE char  dqn_char_to_upper   (char c);
 DQN_FILE_SCOPE char  dqn_char_to_lower   (char c);
+DQN_FILE_SCOPE char  dqn_char_to_upper   (char c);
 DQN_FILE_SCOPE bool  dqn_char_is_digit   (char c);
 DQN_FILE_SCOPE bool  dqn_char_is_alpha   (char c);
 DQN_FILE_SCOPE bool  dqn_char_is_alphanum(char c);
 
 DQN_FILE_SCOPE i32   dqn_strcmp (const char *a, const char *b);
 // Returns the length without the null terminator
-DQN_FILE_SCOPE i32   dqn_strlen (const char *a);
-DQN_FILE_SCOPE char *dqn_strncpy(char *dest, const char *src, i32 numChars);
+DQN_FILE_SCOPE i32   dqn_strlen             (const char *a);
+DQN_FILE_SCOPE i32   dqn_strlen_delimit_with(const char *a, const char delimiter);
+DQN_FILE_SCOPE char *dqn_strncpy            (char *dest, const char *src, i32 numChars);
 
 #define DQN_I32_TO_STR_MAX_BUF_SIZE 11
-DQN_FILE_SCOPE bool  dqn_str_reverse(char *buf, const i32 bufSize);
-DQN_FILE_SCOPE i32   dqn_str_to_i32 (const char *const buf, const i32 bufSize);
+DQN_FILE_SCOPE bool  dqn_str_reverse      (char *buf, const i32 bufSize);
+DQN_FILE_SCOPE bool  dqn_str_has_substring(const char *const a, const i32 lenA,
+                                           const char *const b, const i32 lenB);
+
+DQN_FILE_SCOPE i32   dqn_str_to_i32(const char *const buf, const i32 bufSize);
 // Return the len of the derived string
-DQN_FILE_SCOPE i32   dqn_i32_to_str (i32 value, char *buf, i32 bufSize);
+DQN_FILE_SCOPE i32   dqn_i32_to_str(i32 value, char *buf, i32 bufSize);
 
 // Both return the number of bytes read, return 0 if invalid codepoint or UTF8
 DQN_FILE_SCOPE u32 dqn_ucs_to_utf8(u32 *dest, u32 character);
@@ -467,6 +478,42 @@ DQN_FILE_SCOPE u32  dqn_rnd_pcg_next (DqnRandPCGState *pcg);
 DQN_FILE_SCOPE f32  dqn_rnd_pcg_nextf(DqnRandPCGState *pcg);
 // Returns a random integer N between [min, max]
 DQN_FILE_SCOPE i32  dqn_rnd_pcg_range(DqnRandPCGState *pcg, i32 min, i32 max);
+
+////////////////////////////////////////////////////////////////////////////////
+// PushBuffer Header
+////////////////////////////////////////////////////////////////////////////////
+typedef struct DqnPushBufferBlock
+{
+	u8     *memory;
+	size_t  used;
+	size_t  size;
+
+	DqnPushBufferBlock *prevBlock;
+} DqnPushBufferBlock;
+
+typedef struct DqnPushBuffer
+{
+	DqnPushBufferBlock *block;
+
+	i32 tempBufferCount;
+	u32 alignment;
+} DqnPushBuffer;
+
+typedef struct DqnTempBuffer
+{
+	DqnPushBuffer      *buffer;
+	DqnPushBufferBlock *startingBlock;
+	size_t used;
+
+} DqnTempBuffer;
+
+DQN_FILE_SCOPE bool  dqn_push_buffer_init    (DqnPushBuffer *buffer, size_t size, u32 alignment);
+DQN_FILE_SCOPE void *dqn_push_buffer_allocate(DqnPushBuffer *buffer, size_t size);
+DQN_FILE_SCOPE void  dqn_push_buffer_free_last_buffer(DqnPushBuffer *buffer);
+
+DQN_FILE_SCOPE DqnTempBuffer dqn_push_buffer_begin_temp_region(DqnPushBuffer *buffer);
+DQN_FILE_SCOPE void          dqn_push_buffer_end_temp_region  (DqnTempBuffer tempBuffer);
+
 #endif  /* DQN_H */
 
 #ifndef DQN_INI_H
@@ -1004,6 +1051,41 @@ STBSP__PUBLICDEF void STB_SPRINTF_DECORATE(set_separators)(char comma, char peri
 // #define DQN_INI_IMPLEMENTATION
 #define DQN_INI_STRLEN(s) dqn_strlen(s)
 ////////////////////////////////////////////////////////////////////////////////
+// Memory
+////////////////////////////////////////////////////////////////////////////////
+// NOTE: All memory allocations in dqn.h go through these functions. So they can
+// be rerouted fairly easily especially for platform specific mallocs.
+FILE_SCOPE void *dqn_mem_alloc_internal(size_t size, bool zeroClear)
+{
+	void *result = NULL;
+
+	if (zeroClear)
+	{
+		result = calloc(1, size);
+	}
+	else
+	{
+		result = malloc(size);
+	}
+	return result;
+}
+
+FILE_SCOPE void *dqn_mem_realloc_internal(void *memory, size_t newSize)
+{
+	void *result = realloc(memory, newSize);
+	return result;
+}
+
+FILE_SCOPE void dqn_mem_free_internal(void *memory)
+{
+	if (memory)
+	{
+		free(memory);
+		memory = NULL;
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Math
 ////////////////////////////////////////////////////////////////////////////////
 DQN_FILE_SCOPE f32 dqn_math_lerp(f32 a, f32 t, f32 b)
@@ -1033,7 +1115,7 @@ DQN_FILE_SCOPE f32 dqn_math_sqrtf(f32 a)
 ////////////////////////////////////////////////////////////////////////////////
 // Vec2
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE inline DqnV2 dqn_v2(f32 x, f32 y)
+DQN_FILE_SCOPE DqnV2 dqn_v2(f32 x, f32 y)
 {
 	DqnV2 result = {};
 	result.x  = x;
@@ -1042,13 +1124,13 @@ DQN_FILE_SCOPE inline DqnV2 dqn_v2(f32 x, f32 y)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_v2i(i32 x, i32 y)
+DQN_FILE_SCOPE DqnV2 dqn_v2i(i32 x, i32 y)
 {
 	DqnV2 result = dqn_v2((f32)x, (f32)y);
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_v2_add(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE DqnV2 dqn_v2_add(DqnV2 a, DqnV2 b)
 {
 	DqnV2 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1057,7 +1139,7 @@ DQN_FILE_SCOPE inline DqnV2 dqn_v2_add(DqnV2 a, DqnV2 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_v2_sub(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE DqnV2 dqn_v2_sub(DqnV2 a, DqnV2 b)
 {
 	DqnV2 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1066,7 +1148,7 @@ DQN_FILE_SCOPE inline DqnV2 dqn_v2_sub(DqnV2 a, DqnV2 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_v2_scale(DqnV2 a, f32 b)
+DQN_FILE_SCOPE DqnV2 dqn_v2_scale(DqnV2 a, f32 b)
 {
 	DqnV2 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1075,7 +1157,7 @@ DQN_FILE_SCOPE inline DqnV2 dqn_v2_scale(DqnV2 a, f32 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_v2_hadamard(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE DqnV2 dqn_v2_hadamard(DqnV2 a, DqnV2 b)
 {
 	DqnV2 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1084,7 +1166,7 @@ DQN_FILE_SCOPE inline DqnV2 dqn_v2_hadamard(DqnV2 a, DqnV2 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline f32 dqn_v2_dot(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE f32 dqn_v2_dot(DqnV2 a, DqnV2 b)
 {
 	/*
 	   DOT PRODUCT
@@ -1100,7 +1182,7 @@ DQN_FILE_SCOPE inline f32 dqn_v2_dot(DqnV2 a, DqnV2 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline bool dqn_v2_equals(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE bool dqn_v2_equals(DqnV2 a, DqnV2 b)
 {
 	bool result = TRUE;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1108,7 +1190,7 @@ DQN_FILE_SCOPE inline bool dqn_v2_equals(DqnV2 a, DqnV2 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline f32 dqn_v2_length_squared(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE f32 dqn_v2_length_squared(DqnV2 a, DqnV2 b)
 {
 	f32 x      = b.x - a.x;
 	f32 y      = b.y - a.y;
@@ -1116,22 +1198,22 @@ DQN_FILE_SCOPE inline f32 dqn_v2_length_squared(DqnV2 a, DqnV2 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline f32 dqn_v2_length(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE f32 dqn_v2_length(DqnV2 a, DqnV2 b)
 {
 	f32 lengthSq = dqn_v2_length_squared(a, b);
 	f32 result   = dqn_math_sqrtf(lengthSq);
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_v2_normalise(DqnV2 a)
+DQN_FILE_SCOPE DqnV2 dqn_v2_normalise(DqnV2 a)
 {
 	f32 magnitude = dqn_v2_length(dqn_v2(0, 0), a);
-	DqnV2 result = dqn_v2(a.x, a.y);
+	DqnV2 result  = dqn_v2(a.x, a.y);
 	result        = dqn_v2_scale(a, 1 / magnitude);
 	return result;
 }
 
-DQN_FILE_SCOPE inline bool dqn_v2_overlaps(DqnV2 a, DqnV2 b)
+DQN_FILE_SCOPE bool dqn_v2_overlaps(DqnV2 a, DqnV2 b)
 {
 	bool result = false;
 	
@@ -1154,7 +1236,7 @@ DQN_FILE_SCOPE inline bool dqn_v2_overlaps(DqnV2 a, DqnV2 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_v2_perpendicular(DqnV2 a)
+DQN_FILE_SCOPE DqnV2 dqn_v2_perpendicular(DqnV2 a)
 {
 	DqnV2 result = {a.y, -a.x};
 	return result;
@@ -1178,7 +1260,7 @@ DQN_FILE_SCOPE DqnV2 dqn_v2_constrain_to_ratio(DqnV2 dim, DqnV2 ratio)
 ////////////////////////////////////////////////////////////////////////////////
 // Vec3
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE inline DqnV3 dqn_v3(f32 x, f32 y, f32 z)
+DQN_FILE_SCOPE DqnV3 dqn_v3(f32 x, f32 y, f32 z)
 {
 	DqnV3 result = {};
 	result.x       = x;
@@ -1187,13 +1269,13 @@ DQN_FILE_SCOPE inline DqnV3 dqn_v3(f32 x, f32 y, f32 z)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV3 dqn_v3i(i32 x, i32 y, i32 z)
+DQN_FILE_SCOPE DqnV3 dqn_v3i(i32 x, i32 y, i32 z)
 {
 	DqnV3 result = dqn_v3((f32)x, (f32)y, (f32)z);
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV3 dqn_v3_add(DqnV3 a, DqnV3 b)
+DQN_FILE_SCOPE DqnV3 dqn_v3_add(DqnV3 a, DqnV3 b)
 {
 	DqnV3 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1202,7 +1284,7 @@ DQN_FILE_SCOPE inline DqnV3 dqn_v3_add(DqnV3 a, DqnV3 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV3 dqn_v3_sub(DqnV3 a, DqnV3 b)
+DQN_FILE_SCOPE DqnV3 dqn_v3_sub(DqnV3 a, DqnV3 b)
 {
 	DqnV3 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1211,7 +1293,7 @@ DQN_FILE_SCOPE inline DqnV3 dqn_v3_sub(DqnV3 a, DqnV3 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV3 dqn_v3_scale(DqnV3 a, f32 b)
+DQN_FILE_SCOPE DqnV3 dqn_v3_scale(DqnV3 a, f32 b)
 {
 	DqnV3 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1220,7 +1302,7 @@ DQN_FILE_SCOPE inline DqnV3 dqn_v3_scale(DqnV3 a, f32 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV3 dqn_v3_hadamard(DqnV3 a, DqnV3 b)
+DQN_FILE_SCOPE DqnV3 dqn_v3_hadamard(DqnV3 a, DqnV3 b)
 {
 	DqnV3 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1229,7 +1311,7 @@ DQN_FILE_SCOPE inline DqnV3 dqn_v3_hadamard(DqnV3 a, DqnV3 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline f32 dqn_v3_dot(DqnV3 a, DqnV3 b)
+DQN_FILE_SCOPE f32 dqn_v3_dot(DqnV3 a, DqnV3 b)
 {
 	/*
 	   DOT PRODUCT
@@ -1245,7 +1327,7 @@ DQN_FILE_SCOPE inline f32 dqn_v3_dot(DqnV3 a, DqnV3 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline bool dqn_v3_equals(DqnV3 a, DqnV3 b)
+DQN_FILE_SCOPE bool dqn_v3_equals(DqnV3 a, DqnV3 b)
 {
 	bool result = TRUE;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1253,7 +1335,7 @@ DQN_FILE_SCOPE inline bool dqn_v3_equals(DqnV3 a, DqnV3 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV3 dqn_v3_cross(DqnV3 a, DqnV3 b)
+DQN_FILE_SCOPE DqnV3 dqn_v3_cross(DqnV3 a, DqnV3 b)
 {
 	/*
 	   CROSS PRODUCT
@@ -1272,18 +1354,18 @@ DQN_FILE_SCOPE inline DqnV3 dqn_v3_cross(DqnV3 a, DqnV3 b)
 ////////////////////////////////////////////////////////////////////////////////
 // Vec4
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE inline DqnV4 dqn_v4(f32 x, f32 y, f32 z, f32 w)
+DQN_FILE_SCOPE DqnV4 dqn_v4(f32 x, f32 y, f32 z, f32 w)
 {
 	DqnV4 result = {x, y, z, w};
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV4 dqn_v4i(i32 x, i32 y, i32 z, i32 w) {
+DQN_FILE_SCOPE DqnV4 dqn_v4i(i32 x, i32 y, i32 z, i32 w) {
 	DqnV4 result = dqn_v4((f32)x, (f32)y, (f32)z, (f32)w);
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV4 dqn_v4_add(DqnV4 a, DqnV4 b)
+DQN_FILE_SCOPE DqnV4 dqn_v4_add(DqnV4 a, DqnV4 b)
 {
 	DqnV4 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1292,7 +1374,7 @@ DQN_FILE_SCOPE inline DqnV4 dqn_v4_add(DqnV4 a, DqnV4 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV4 dqn_v4_sub(DqnV4 a, DqnV4 b)
+DQN_FILE_SCOPE DqnV4 dqn_v4_sub(DqnV4 a, DqnV4 b)
 {
 	DqnV4 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1301,7 +1383,7 @@ DQN_FILE_SCOPE inline DqnV4 dqn_v4_sub(DqnV4 a, DqnV4 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV4 dqn_v4_scale(DqnV4 a, f32 b)
+DQN_FILE_SCOPE DqnV4 dqn_v4_scale(DqnV4 a, f32 b)
 {
 	DqnV4 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1310,7 +1392,7 @@ DQN_FILE_SCOPE inline DqnV4 dqn_v4_scale(DqnV4 a, f32 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV4 dqn_v4_hadamard(DqnV4 a, DqnV4 b)
+DQN_FILE_SCOPE DqnV4 dqn_v4_hadamard(DqnV4 a, DqnV4 b)
 {
 	DqnV4 result;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1319,7 +1401,7 @@ DQN_FILE_SCOPE inline DqnV4 dqn_v4_hadamard(DqnV4 a, DqnV4 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline f32 dqn_v4_dot(DqnV4 a, DqnV4 b)
+DQN_FILE_SCOPE f32 dqn_v4_dot(DqnV4 a, DqnV4 b)
 {
 	/*
 	   DOT PRODUCT
@@ -1335,7 +1417,7 @@ DQN_FILE_SCOPE inline f32 dqn_v4_dot(DqnV4 a, DqnV4 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline bool dqn_v4_equals(DqnV4 a, DqnV4 b)
+DQN_FILE_SCOPE bool dqn_v4_equals(DqnV4 a, DqnV4 b)
 {
 	bool result = TRUE;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(a.e); i++)
@@ -1346,7 +1428,7 @@ DQN_FILE_SCOPE inline bool dqn_v4_equals(DqnV4 a, DqnV4 b)
 ////////////////////////////////////////////////////////////////////////////////
 // 4D Matrix Mat4
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_identity()
+DQN_FILE_SCOPE DqnMat4 dqn_mat4_identity()
 {
 	DqnMat4 result    = {0};
 	result.e[0][0] = 1;
@@ -1356,7 +1438,7 @@ DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_identity()
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnMat4
+DQN_FILE_SCOPE DqnMat4
 dqn_mat4_ortho(f32 left, f32 right, f32 bottom, f32 top, f32 zNear, f32 zFar)
 {
 	DqnMat4 result = dqn_mat4_identity();
@@ -1371,7 +1453,7 @@ dqn_mat4_ortho(f32 left, f32 right, f32 bottom, f32 top, f32 zNear, f32 zFar)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_translate(f32 x, f32 y, f32 z)
+DQN_FILE_SCOPE DqnMat4 dqn_mat4_translate(f32 x, f32 y, f32 z)
 {
 	DqnMat4 result = dqn_mat4_identity();
 	result.e[3][0] = x;
@@ -1380,7 +1462,7 @@ DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_translate(f32 x, f32 y, f32 z)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_rotate(f32 radians, f32 x, f32 y, f32 z)
+DQN_FILE_SCOPE DqnMat4 dqn_mat4_rotate(f32 radians, f32 x, f32 y, f32 z)
 {
 	DqnMat4 result = dqn_mat4_identity();
 	f32 sinVal = sinf(radians);
@@ -1403,7 +1485,7 @@ DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_rotate(f32 radians, f32 x, f32 y, f32 z)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_scale(f32 x, f32 y, f32 z)
+DQN_FILE_SCOPE DqnMat4 dqn_mat4_scale(f32 x, f32 y, f32 z)
 {
 	DqnMat4 result = {0};
 	result.e[0][0] = x;
@@ -1413,7 +1495,7 @@ DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_scale(f32 x, f32 y, f32 z)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_mul(DqnMat4 a, DqnMat4 b)
+DQN_FILE_SCOPE DqnMat4 dqn_mat4_mul(DqnMat4 a, DqnMat4 b)
 {
 	DqnMat4 result = {0};
 	for (i32 j = 0; j < 4; j++) {
@@ -1428,7 +1510,7 @@ DQN_FILE_SCOPE inline DqnMat4 dqn_mat4_mul(DqnMat4 a, DqnMat4 b)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnV4 dqn_mat4_mul_vec4(DqnMat4 a, DqnV4 b)
+DQN_FILE_SCOPE DqnV4 dqn_mat4_mul_vec4(DqnMat4 a, DqnV4 b)
 {
 	DqnV4 result = {0};
 
@@ -1447,7 +1529,7 @@ DQN_FILE_SCOPE inline DqnV4 dqn_mat4_mul_vec4(DqnMat4 a, DqnV4 b)
 ////////////////////////////////////////////////////////////////////////////////
 // Rect
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE inline DqnRect dqn_rect(DqnV2 origin, DqnV2 size)
+DQN_FILE_SCOPE DqnRect dqn_rect(DqnV2 origin, DqnV2 size)
 {
 	DqnRect result = {};
 	result.min      = origin;
@@ -1456,13 +1538,13 @@ DQN_FILE_SCOPE inline DqnRect dqn_rect(DqnV2 origin, DqnV2 size)
 	return result;
 }
 
-DQN_FILE_SCOPE inline void dqn_rect_get_size_2f(DqnRect rect, f32 *width, f32 *height)
+DQN_FILE_SCOPE void dqn_rect_get_size_2f(DqnRect rect, f32 *width, f32 *height)
 {
 	*width  = DQN_ABS(rect.max.x - rect.min.x);
 	*height = DQN_ABS(rect.max.y - rect.min.y);
 }
 
-DQN_FILE_SCOPE inline DqnV2 dqn_rect_get_size_v2(DqnRect rect)
+DQN_FILE_SCOPE DqnV2 dqn_rect_get_size_v2(DqnRect rect)
 {
 	f32 width     = DQN_ABS(rect.max.x - rect.min.x);
 	f32 height    = DQN_ABS(rect.max.y - rect.min.y);
@@ -1471,7 +1553,7 @@ DQN_FILE_SCOPE inline DqnV2 dqn_rect_get_size_v2(DqnRect rect)
 }
 
 
-DQN_FILE_SCOPE inline DqnV2 dqn_rect_get_centre(DqnRect rect)
+DQN_FILE_SCOPE DqnV2 dqn_rect_get_centre(DqnRect rect)
 {
 	f32 sumX  = rect.min.x + rect.max.x;
 	f32 sumY  = rect.min.y + rect.max.y;
@@ -1479,7 +1561,7 @@ DQN_FILE_SCOPE inline DqnV2 dqn_rect_get_centre(DqnRect rect)
 	return result;
 }
 
-DQN_FILE_SCOPE inline DqnRect dqn_rect_move(DqnRect rect, DqnV2 shift)
+DQN_FILE_SCOPE DqnRect dqn_rect_move(DqnRect rect, DqnV2 shift)
 {
 	DqnRect result = {0};
 	result.min       = dqn_v2_add(rect.min, shift);
@@ -1488,7 +1570,7 @@ DQN_FILE_SCOPE inline DqnRect dqn_rect_move(DqnRect rect, DqnV2 shift)
 	return result;
 }
 
-DQN_FILE_SCOPE inline bool dqn_rect_contains_p(DqnRect rect, DqnV2 p)
+DQN_FILE_SCOPE bool dqn_rect_contains_p(DqnRect rect, DqnV2 p)
 {
 	bool outsideOfRectX = false;
 	if (p.x < rect.min.x || p.x > rect.max.w)
@@ -1506,7 +1588,7 @@ DQN_FILE_SCOPE inline bool dqn_rect_contains_p(DqnRect rect, DqnV2 p)
 ////////////////////////////////////////////////////////////////////////////////
 // String Operations
 ////////////////////////////////////////////////////////////////////////////////
-DQN_FILE_SCOPE inline char dqn_char_to_lower(char c)
+DQN_FILE_SCOPE char dqn_char_to_lower(char c)
 {
 	if (c >= 'A' && c <= 'Z')
 	{
@@ -1517,7 +1599,7 @@ DQN_FILE_SCOPE inline char dqn_char_to_lower(char c)
 	return c;
 }
 
-DQN_FILE_SCOPE inline char dqn_char_to_upper(char c)
+DQN_FILE_SCOPE char dqn_char_to_upper(char c)
 {
 	if (c >= 'a' && c <= 'z')
 	{
@@ -1529,19 +1611,19 @@ DQN_FILE_SCOPE inline char dqn_char_to_upper(char c)
 }
 
 
-DQN_FILE_SCOPE inline bool dqn_char_is_digit(char c)
+DQN_FILE_SCOPE bool dqn_char_is_digit(char c)
 {
 	if (c >= '0' && c <= '9') return true;
 	return false;
 }
 
-DQN_FILE_SCOPE inline bool dqn_char_is_alpha(char c)
+DQN_FILE_SCOPE bool dqn_char_is_alpha(char c)
 {
 	if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
 	return false;
 }
 
-DQN_FILE_SCOPE inline bool dqn_char_is_alphanum(char c)
+DQN_FILE_SCOPE bool dqn_char_is_alphanum(char c)
 {
 	if (dqn_char_is_alpha(c) || dqn_char_is_digit(c)) return true;
 	return false;
@@ -1571,6 +1653,13 @@ DQN_FILE_SCOPE i32 dqn_strlen(const char *a)
 	return result;
 }
 
+DQN_FILE_SCOPE i32 dqn_strlen_delimit_with(const char *a, const char delimiter)
+{
+	i32 result = 0;
+	while (a && a[result] && a[result] != delimiter) result++;
+	return result;
+}
+
 DQN_FILE_SCOPE char *dqn_strncpy(char *dest, const char *src, i32 numChars)
 {
 	if (!dest) return NULL;
@@ -1595,6 +1684,65 @@ DQN_FILE_SCOPE bool dqn_str_reverse(char *buf, const i32 bufSize)
 	}
 
 	return true;
+}
+
+DQN_FILE_SCOPE bool dqn_str_has_substring(const char *const a, const i32 lenA,
+                                          const char *const b, const i32 lenB)
+{
+	if (!a || !b) return false;
+	if (lenA == 0 || lenB == 0) return false;
+
+	const char *longStr, *shortStr;
+	i32 longLen, shortLen;
+	if (lenA > lenB)
+	{
+		longStr  = a;
+		longLen  = lenA;
+
+		shortStr = b;
+		shortLen = lenB;
+	}
+	else
+	{
+		longStr  = b;
+		longLen  = lenB;
+
+		shortStr = a;
+		shortLen = lenA;
+	}
+
+	bool matchedSubstr = false;
+	for (i32 indexIntoLong = 0; indexIntoLong < longLen && !matchedSubstr;
+	     indexIntoLong++)
+	{
+		// NOTE: As we scan through, if the longer string we index into becomes
+		// shorter than the substring we're checking then the substring is not
+		// contained in the long string.
+		i32 remainingLenInLongStr = longLen - indexIntoLong;
+		if (remainingLenInLongStr < shortLen) break;
+
+		const char *longSubstr = &longStr[indexIntoLong];
+		i32 index = 0;
+		for (;;)
+		{
+			if (dqn_char_to_lower(longSubstr[index]) ==
+			    dqn_char_to_lower(shortStr[index]))
+			{
+				index++;
+				if (index >= shortLen || !shortStr[index])
+				{
+					matchedSubstr = true;
+					break;
+				}
+			}
+			else
+			{
+				break;
+			}
+		}
+	}
+
+	return matchedSubstr;
 }
 
 DQN_FILE_SCOPE i32 dqn_str_to_i32(const char *const buf, const i32 bufSize)
@@ -2056,25 +2204,26 @@ DQN_FILE_SCOPE char **dqn_dir_read(char *dir, u32 *numFiles)
 			return NULL;
 		}
 
-
-		char **list = (char **)calloc(1, sizeof(*list) * (currNumFiles));
+		char **list = (char **)dqn_mem_alloc_internal(
+		    sizeof(*list) * (currNumFiles), true);
 		if (!list)
 		{
-			DQN_WIN32_ERROR_BOX("calloc() failed.", NULL);
+			DQN_WIN32_ERROR_BOX("dqn_mem_alloc_internal() failed.", NULL);
 			return NULL;
 		}
 
 		for (u32 i = 0; i < currNumFiles; i++)
 		{
-			list[i] = (char *)calloc(1, sizeof(**list) * MAX_PATH);
+			list[i] =
+			    (char *)dqn_mem_alloc_internal(sizeof(**list) * MAX_PATH, true);
 			if (!list[i])
 			{
 				for (u32 j = 0; j < i; j++)
 				{
-					free(list[j]);
+					dqn_mem_free_internal(list[j]);
 				}
 
-				DQN_WIN32_ERROR_BOX("calloc() failed.", NULL);
+				DQN_WIN32_ERROR_BOX("dqn_mem_alloc_internal() failed.", NULL);
 				return NULL;
 			}
 		}
@@ -2095,17 +2244,17 @@ DQN_FILE_SCOPE char **dqn_dir_read(char *dir, u32 *numFiles)
 #endif
 }
 
-DQN_FILE_SCOPE inline void dqn_dir_read_free(char **fileList, u32 numFiles)
+DQN_FILE_SCOPE void dqn_dir_read_free(char **fileList, u32 numFiles)
 {
 	if (fileList)
 	{
 		for (u32 i = 0; i < numFiles; i++)
 		{
-			if (fileList[i]) free(fileList[i]);
+			if (fileList[i]) dqn_mem_free_internal(fileList[i]);
 			fileList[i] = NULL;
 		}
 
-		free(fileList);
+		dqn_mem_free_internal(fileList);
 	}
 }
 
@@ -2113,7 +2262,7 @@ DQN_FILE_SCOPE inline void dqn_dir_read_free(char **fileList, u32 numFiles)
 // Timer
 ////////////////////////////////////////////////////////////////////////////////
 #ifdef DQN_WIN32
-inline FILE_SCOPE f64 dqn_win32_query_perf_counter_time_in_s_internal()
+FILE_SCOPE f64 dqn_win32_query_perf_counter_time_in_s_internal()
 {
 	LOCAL_PERSIST LARGE_INTEGER queryPerformanceFrequency = {};
 	if (queryPerformanceFrequency.QuadPart == 0)
@@ -2223,6 +2372,103 @@ DQN_FILE_SCOPE i32 dqn_rnd_pcg_range(DqnRandPCGState *pcg, i32 min, i32 max)
 	i32 const value = (i32)(dqn_rnd_pcg_nextf(pcg) * range);
 	return min + value;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// DqnPushBuffer Header
+////////////////////////////////////////////////////////////////////////////////
+FILE_SCOPE size_t dqn_size_alignment_internal(u32 alignment, size_t size)
+{
+	size_t result = ((size + (alignment-1)) & ~(alignment-1));
+	return result;
+}
+
+FILE_SCOPE DqnPushBufferBlock *
+dqn_push_buffer_alloc_block_internal(u32 alignment, size_t size)
+{
+	size_t alignedSize = dqn_size_alignment_internal(alignment, size);
+	size_t totalSize   = alignedSize + sizeof(DqnPushBufferBlock);
+
+	DqnPushBufferBlock *result = (DqnPushBufferBlock *)dqn_mem_alloc_internal(totalSize, true);
+	if (!result) return NULL;
+
+	result->memory = (u8 *)result + sizeof(*result);
+	result->size   = alignedSize;
+	result->used   = 0;
+	return result;
+}
+
+DQN_FILE_SCOPE bool dqn_push_buffer_init(DqnPushBuffer *buffer, size_t size, u32 alignment)
+{
+	if (!buffer || size <= 0) return false;
+
+	buffer->block = dqn_push_buffer_alloc_block_internal(alignment, size);
+	if (!buffer->block) return false;
+
+	buffer->tempBufferCount = 0;
+	buffer->alignment       = alignment;
+	return true;
+}
+
+DQN_FILE_SCOPE void *dqn_push_buffer_allocate(DqnPushBuffer *buffer, size_t size)
+{
+	size_t alignedSize = dqn_size_alignment_internal(buffer->alignment, size);
+	if ((buffer->block->used + alignedSize) > buffer->block->size)
+	{
+		size_t newBlockSize = DQN_MAX(alignedSize, buffer->block->size);
+		DqnPushBufferBlock *newBlock = dqn_push_buffer_alloc_block_internal(
+		    buffer->alignment, newBlockSize);
+		if (!newBlock) return NULL;
+
+		newBlock->prevBlock = buffer->block;
+		buffer->block       = newBlock;
+	}
+
+	u8 *currPointer        = buffer->block->memory + buffer->block->used;
+	u8 *alignedResult      = (u8 *)dqn_size_alignment_internal(buffer->alignment, (size_t)currPointer);
+	size_t alignmentOffset = (size_t)(alignedResult - currPointer);
+
+	void *result = alignedResult;
+	buffer->block->used += (alignedSize + alignmentOffset);
+
+	return result;
+}
+
+DQN_FILE_SCOPE void dqn_push_buffer_free_last_buffer(DqnPushBuffer *buffer)
+{
+	DqnPushBufferBlock *prevBlock = buffer->block->prevBlock;
+	dqn_mem_free_internal(buffer->block);
+	buffer->block = prevBlock;
+
+	// No more blocks, then last block has been freed
+	if (!buffer->block) DQN_ASSERT(buffer->tempBufferCount == 0);
+}
+
+DQN_FILE_SCOPE DqnTempBuffer dqn_push_buffer_begin_temp_region(DqnPushBuffer *buffer)
+{
+	DqnTempBuffer result = {};
+	result.buffer        = buffer;
+	result.startingBlock = buffer->block;
+	result.used          = buffer->block->used;
+
+	buffer->tempBufferCount++;
+	return result;
+}
+
+DQN_FILE_SCOPE void dqn_push_buffer_end_temp_region(DqnTempBuffer tempBuffer)
+{
+	DqnPushBuffer *buffer = tempBuffer.buffer;
+	while (buffer->block != tempBuffer.startingBlock)
+		dqn_push_buffer_free_last_buffer(buffer);
+
+	if (buffer->block)
+	{
+		DQN_ASSERT(buffer->block->used >= tempBuffer.used);
+		buffer->block->used = tempBuffer.used;
+		DQN_ASSERT(buffer->tempBufferCount >= 0);
+	}
+	buffer->tempBufferCount--;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // STB_Sprintf
 ////////////////////////////////////////////////////////////////////////////////
