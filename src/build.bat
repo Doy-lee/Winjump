@@ -66,7 +66,7 @@ REM incremental:no, turn incremental builds off
 REM opt:ref,        try to remove functions from libs that are not referenced at all
 set linkFlags=-incremental:no -opt:ref
 
-cl %compileFlags% %defines% %compileFiles% %includeFlags% /link -subsystem:WINDOWS,5.1 %linkLibraries% %linkFlags% /nologo /OUT:"winjump.exe"
+cl %compileFlags% %defines% %compileFiles% %includeFlags% /link -subsystem:WINDOWS %linkLibraries% %linkFlags% /nologo /OUT:"winjump.exe"
 REM cl /P %defines% %compileFiles%
 
 popd

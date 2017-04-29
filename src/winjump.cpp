@@ -41,7 +41,7 @@ FILE_SCOPE void win32_display_window(HWND window)
 // - out: The output buffer
 // - outLen: Length of the output buffer
 // Returns the number of characters stored into the buffer
-#define FRIENDLY_NAME_LEN 250
+#define FRIENDLY_NAME_LEN 512
 FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
                                                  wchar_t *out, i32 outLen)
 {
@@ -237,7 +237,7 @@ FILE_SCOPE LRESULT CALLBACK win32_edit_box_callback(HWND window,
 		case WM_KEYDOWN:
 		case WM_KEYUP:
 		{
-			u32 vkCode = wParam;
+			u32 vkCode = (u32)wParam;
 			switch (vkCode)
 			{
 				case VK_RETURN:
@@ -481,8 +481,7 @@ winjump_win32_hkm_hotkey_modifier_to_apphotkey(i32 win32HkmHotkeyModifier)
 }
 
 // Returns the len of the buffer used
-u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf,
-                                    u32 bufSize)
+u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf, u32 bufSize)
 {
 	if (!buf) return 0;
 
@@ -499,7 +498,7 @@ u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf,
 
 	dqn_sprintf(stringPtr, "%c", hotkey.virtualKey);
 
-	u32 len = (stringPtr - buf) + 1;
+	u32 len = (u32)((stringPtr - buf) + 1);
 	DQN_ASSERT(len < bufSize);
 
 	return len;
@@ -692,7 +691,7 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 					{
 						DqnArray<Win32Program> *programArray =
 						    &globalState.programArray;
-						DQN_ASSERT(selectedIndex < programArray->count);
+						DQN_ASSERT((i32)selectedIndex < programArray->count);
 
 						Win32Program showProgram =
 						    programArray->data[selectedIndex];
@@ -1201,7 +1200,7 @@ winjump_program_array_create_snapshot(WinjumpState *state,
 void winjump_update(WinjumpState *state)
 {
 	HWND listBox = state->window[winjumpwindow_list_program_entries].handle;
-	i32 firstVisibleIndex = SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
+	i32 firstVisibleIndex = (i32)SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
 
 	// NOTE: Set first char is size of buffer as required by win32
 	wchar_t newSearchStr[WIN32_MAX_PROGRAM_TITLE] = {};
@@ -1371,7 +1370,7 @@ void winjump_update(WinjumpState *state)
 	{
 		// Check displayed list entries against our new enumerated programs list
 		i32 programArraySize   = (i32)programArray->count;
-		const LRESULT listSize = SendMessageW(listBox, LB_GETCOUNT, 0, 0);
+		const i32 listSize = (i32)SendMessageW(listBox, LB_GETCOUNT, 0, 0);
 		for (LRESULT index = 0;
 		     (index < listSize) && (index < programArraySize); index++)
 		{
