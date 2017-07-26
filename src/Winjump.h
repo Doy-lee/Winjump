@@ -1,18 +1,12 @@
 #ifndef WINJUMP_H
 #define WINJUMP_H
 
-#ifndef VC_EXTRALEAN
-	#define VC_EXTRALEAN
-#endif
-
-#ifndef WIN32_LEAN_AND_MEAN
-	#define WIN32_LEAN_AND_MEAN
-#endif
-
+#define VC_EXTRALEAN 1
+#define WIN32_LEAN_AND_MEAN 1
 #include <Windows.h>
 #include "dqn.h"
 
-typedef struct Win32Program
+struct Win32Program
 {
 	wchar_t title[256];
 	i32     titleLen;
@@ -24,50 +18,42 @@ typedef struct Win32Program
 	DWORD   pid;
 
 	i32 lastStableIndex;
-} Win32Program;
+};
 
 enum WinjumpWindows
 {
-	winjumpwindow_main_client,
-	winjumpwindow_tab,
-	winjumpwindow_btn_change_font,
-	winjumpwindow_text_hotkey_is_valid,
-	winjumpwindow_text_hotkey_winjump_activate,
-	winjumpwindow_hotkey_winjump_activate,
-	winjumpwindow_list_program_entries,
-	winjumpwindow_input_search_entries,
-	winjumpwindow_status_bar,
-	winjumpwindow_count,
+	WinjumpWindow_MainClient,
+	WinjumpWindow_Tab,
+	WinjumpWindow_BtnChangeFont,
+	WinjumpWindow_TextHotkeyIsValid,
+	WinjumpWindow_TextHotkeyWinjumpActivate,
+	WinjumpWindow_HotkeyWinjumpActivate,
+	WinjumpWindow_ListProgramEntries,
+	WinjumpWindow_InputSearchEntries,
+	WinjumpWindow_StatusBar,
+	WinjumpWindow_Count,
 };
 
 #define WIN32_NOT_PART_OF_TAB -1
-typedef struct Win32Window
+struct Win32Window
 {
 	HWND handle;
 	i32  tabIndex = WIN32_NOT_PART_OF_TAB;
 
 	// The default proc to fallback to when subclassing. Is 0 if not defined
 	WNDPROC defaultProc;
-} Win32Window;
-
-enum AppHotkeyModifier
-{
-	apphotkeymodifier_alt,
-	apphotkeymodifier_shift,
-	apphotkeymodifier_ctrl,
-	apphotkeymodifier_count,
 };
 
-typedef struct AppHotkey
+struct AppHotkey
 {
-	char virtualKey                 = 'K';
-	enum AppHotkeyModifier modifier = apphotkeymodifier_alt;
-} AppHotkey;
+	char win32VirtualKey  = 'K';     // The character key
+	i32  win32ModifierKey = MOD_ALT; // Alt/Shift/Ctrl key
+};
 
-typedef struct WinjumpState
+struct WinjumpState
 {
 	HFONT   font;
-	Win32Window window[winjumpwindow_count];
+	Win32Window window[WinjumpWindow_Count];
 
 	DqnArray<Win32Program>           programArray;
 	DqnArray<DqnArray<Win32Program>> programArraySnapshotStack;
@@ -76,13 +62,11 @@ typedef struct WinjumpState
 	bool configIsStale;
 	i32  searchStringLen;
 
-	AppHotkey appHotkey;
-} WinjumpState;
+	AppHotkey appHotkey = {};
+};
 
 #define WIN32_GUID_HOTKEY_ACTIVATE_APP 10983
 
-u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf, u32 bufSize);
-u32 winjump_apphotkey_to_win32_hkm_hotkey_modifier(enum AppHotkeyModifier modifier);
-u32 winjump_apphotkey_to_win32_mod_hotkey_modifier(enum AppHotkeyModifier modifier);
-
+u32 Winjump_HotkeyToString(AppHotkey hotkey, char *const buf, u32 bufSize);
+bool Winjump_HotkeyIsValid(AppHotkey hotkey);
 #endif /* WINJUMP_H */

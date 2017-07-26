@@ -36,25 +36,7 @@ REM wd4189 ignore: local variable is initialised but not referenced
 REM wd4505 ignore: unreferenced local function not used will be removed
 REM Od disables optimisations
 
-set buildUnity=928
-set buildNormal=283
-
-set compileMode=%buildUnity%
-
-if %compileMode% == %buildUnity%  goto unity_build_flags
-if %compileMode% == %buildNormal% goto normal_build_flags
-
-:unity_build_flags
-	set defines=-D "WINJUMP_UNITY_BUILD"
-	set compileFiles= ..\src\UnityBuild\UnityBuild.cpp
-	goto compile
-
-:normal_build_flags
-	set defines=
-	set compileFiles= ..\src\*.cpp
-
-:compile
-
+set compileFiles= ..\src\UnityBuild\UnityBuild.cpp
 set compileFlags=-EHa- -GR- -Oi -MT -Z7 -W4 -WX -wd4100 -wd4201 -wd4189 -wd4505 -Od
 REM Include directories
 set includeFlags=

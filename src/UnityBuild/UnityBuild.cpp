@@ -1,7 +1,6 @@
 #include "..\Winjump.cpp"
 #include "..\Config.cpp"
 
-#ifdef WINJUMP_UNITY_BUILD
-	#define DQN_IMPLEMENTATION
-	#include "..\dqn.h"
-#endif
+#define DQN_WIN32_IMPLEMENTATION 1
+#define DQN_IMPLEMENTATION 1
+#include "..\dqn.h"

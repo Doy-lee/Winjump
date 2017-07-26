@@ -10,10 +10,8 @@
 #include "Config.h"
 #include "Wchar.h"
 
-#ifndef WINJUMP_UNITY_BUILD
-	#define DQN_IMPLEMENTATION
-	#include "dqn.h"
-#endif
+#define DQN_PLATFORM_HEADER
+#include "dqn.h"
 
 #define WINJUMP_DEBUG_MODE
 
@@ -30,7 +28,7 @@ FILE_SCOPE bool         globalWindowIsInactive;
 
 // Returns length without null terminator, returns 0 if NULL
 
-FILE_SCOPE void win32_display_window(HWND window)
+FILE_SCOPE void Win32DisplayWindow(HWND window)
 {
 	// IsIconic == if window is minimised
 	if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
@@ -42,8 +40,8 @@ FILE_SCOPE void win32_display_window(HWND window)
 // - outLen: Length of the output buffer
 // Returns the number of characters stored into the buffer
 #define FRIENDLY_NAME_LEN 512
-FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
-                                                 wchar_t *out, i32 outLen)
+FILE_SCOPE i32 Winjump_GetProgramFriendlyName(const Win32Program *program,
+                                              wchar_t *out, i32 outLen)
 {
 
 	// Friendly Name Format
@@ -60,7 +58,7 @@ FILE_SCOPE i32 winjump_get_program_friendly_name(const Win32Program *program,
 	return numStored;
 }
 
-BOOL CALLBACK win32_enum_windows_callback(HWND window, LPARAM lParam)
+BOOL CALLBACK Win32EnumWindowsCallback(HWND window, LPARAM lParam)
 {
 	DqnArray<Win32Program> *programArray = &globalState.programArray;
 	Win32Program program = {};
@@ -106,11 +104,11 @@ BOOL CALLBACK win32_enum_windows_callback(HWND window, LPARAM lParam)
 					DQN_ASSERT(len != DQN_ARRAY_COUNT(program.exe));
 
 					PathStripPathW(program.exe);
-					program.exeLen = wchar_strlen(program.exe);
+					program.exeLen = DqnWStr_Len(program.exe);
 					CloseHandle(handle);
 				}
 
-				Win32Program *result = dqn_array_push(programArray, program);
+				Win32Program *result = DqnArray_Push(programArray, program);
 				if (result) result->lastStableIndex = (i32)programArray->count - 1;
 				break;
 			}
@@ -124,8 +122,7 @@ BOOL CALLBACK win32_enum_windows_callback(HWND window, LPARAM lParam)
 	return true;
 }
 
-FILE_SCOPE Win32Window *winjump_get_win32window_from_hwnd(WinjumpState *state,
-                                                          HWND hwnd)
+FILE_SCOPE Win32Window *GetWin32WindowFromHwnd(WinjumpState *state, HWND hwnd)
 {
 	Win32Window *result = NULL;
 	for (i32 i = 0; i < DQN_ARRAY_COUNT(state->window); i++)
@@ -140,12 +137,10 @@ FILE_SCOPE Win32Window *winjump_get_win32window_from_hwnd(WinjumpState *state,
 	return result;
 }
 
-FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
-                                                    WPARAM wParam,
-                                                    LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK Win32ListBoxCallback(HWND window, UINT msg,
+                                                 WPARAM wParam, LPARAM lParam)
 {
-	Win32Window *win32Window =
-	    winjump_get_win32window_from_hwnd(&globalState, window);
+	Win32Window *win32Window = GetWin32WindowFromHwnd(&globalState, window);
 	DQN_ASSERT(win32Window);
 
 #define WIN32_LIST_DOUBLE_BUFFERING 0
@@ -180,7 +175,7 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 			HDC deviceContext = BeginPaint(window, &paint);
 			{
 				LONG clientWidth, clientHeight;
-				dqn_win32_get_rect_dim(clientRect, &clientWidth, &clientHeight);
+				DqnWin32GetRectDim(clientRect, &clientWidth, &clientHeight);
 
 				// TODO(doyle): It's possible to cache these so we don't
 				// recreate every frame.
@@ -220,13 +215,11 @@ FILE_SCOPE LRESULT CALLBACK win32_list_box_callback(HWND window, UINT msg,
 
 }
 
-FILE_SCOPE LRESULT CALLBACK win32_edit_box_callback(HWND window,
-                                                         UINT msg,
-                                                         WPARAM wParam,
-                                                         LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK Win32EditBoxCallback(HWND window, UINT msg, WPARAM wParam,
+                                                 LPARAM lParam)
 {
 	Win32Window *win32Window =
-	    winjump_get_win32window_from_hwnd(&globalState, window);
+	    GetWin32WindowFromHwnd(&globalState, window);
 	DQN_ASSERT(win32Window);
 
 	LRESULT result = 0;
@@ -249,9 +242,9 @@ FILE_SCOPE LRESULT CALLBACK win32_edit_box_callback(HWND window,
 					{
 						Win32Program programToShow = programArray->data[0];
 
-						win32_display_window(programToShow.window);
+						Win32DisplayWindow(programToShow.window);
 						SetWindowText(window, "");
-						ShowWindow(globalState.window[winjumpwindow_main_client]
+						ShowWindow(globalState.window[WinjumpWindow_MainClient]
 						               .handle,
 						           SW_MINIMIZE);
 					}
@@ -281,7 +274,7 @@ FILE_SCOPE LRESULT CALLBACK win32_edit_box_callback(HWND window,
 				{
 					// If escape is pressed, empty the text
 					HWND inputBox =
-					    globalState.window[winjumpwindow_input_search_entries]
+					    globalState.window[WinjumpWindow_InputSearchEntries]
 					        .handle;
 					SetWindowTextW(inputBox, L"");
 					return 0;
@@ -305,7 +298,7 @@ FILE_SCOPE LRESULT CALLBACK win32_edit_box_callback(HWND window,
 	return result;
 }
 
-FILE_SCOPE void win32_font_calculate_dim(HDC deviceContext, HFONT font,
+FILE_SCOPE void Win32FontCalculateDim(HDC deviceContext, HFONT font,
                                          char *string, LONG *width,
                                          LONG *height)
 {
@@ -324,7 +317,7 @@ FILE_SCOPE void win32_font_calculate_dim(HDC deviceContext, HFONT font,
 	if (height) *height = rect.bottom - rect.top;
 }
 
-FILE_SCOPE void win32_tab_get_offset_to_content(HWND window, LONG *offsetX,
+FILE_SCOPE void Win32TabGetOffsetToContent(HWND window, LONG *offsetX,
                                                 LONG *offsetY)
 {
 	if (window)
@@ -337,37 +330,37 @@ FILE_SCOPE void win32_tab_get_offset_to_content(HWND window, LONG *offsetX,
 }
 
 // NOTE: Resizing the search box will readjust elements dependent on its size
-FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
+FILE_SCOPE void Winjump_ResizeSearchBox(WinjumpState *const state,
                                           i32 newWidth,
                                           i32 newHeight,
                                           const bool ignoreWidth,
                                           const bool ignoreHeight)
 {
-	HWND tab = globalState.window[winjumpwindow_tab].handle;
+	HWND tab = globalState.window[WinjumpWindow_Tab].handle;
 	LONG tabOffsetY;
-	win32_tab_get_offset_to_content(tab, NULL, &tabOffsetY);
+	Win32TabGetOffsetToContent(tab, NULL, &tabOffsetY);
 
 	HWND editWindow =
-	    globalState.window[winjumpwindow_input_search_entries].handle;
+	    globalState.window[WinjumpWindow_InputSearchEntries].handle;
 	LONG origWidth, origHeight;
-	dqn_win32_get_client_dim(editWindow, &origWidth, &origHeight);
+	DqnWin32_GetClientDim(editWindow, &origWidth, &origHeight);
 
 	if (ignoreWidth)  newWidth  = origWidth;
 	if (ignoreHeight) newHeight = origHeight;
 
 	// Resize the edit box that is used for filtering
-	DqnV2 editP = dqn_v2i(WIN32_UI_MARGIN, tabOffsetY + WIN32_UI_MARGIN);
+	DqnV2 editP = DqnV2_2i(WIN32_UI_MARGIN, tabOffsetY + WIN32_UI_MARGIN);
 	MoveWindow(editWindow, (i32)editP.x, (i32)editP.y, newWidth, newHeight,
 	           TRUE);
 
 	// Resize the list window
 	{
 		LONG clientHeight;
-		dqn_win32_get_client_dim(tab, NULL, &clientHeight);
+		DqnWin32_GetClientDim(tab, NULL, &clientHeight);
 
 		HWND listWindow =
-		    state->window[winjumpwindow_list_program_entries].handle;
-		DqnV2 listP = dqn_v2(editP.x, (editP.y + newHeight + WIN32_UI_MARGIN));
+		    state->window[WinjumpWindow_ListProgramEntries].handle;
+		DqnV2 listP = DqnV2_2f(editP.x, (editP.y + newHeight + WIN32_UI_MARGIN));
 		i32 listWidth  = newWidth;
 		i32 listHeight = clientHeight - (i32)listP.y;
 
@@ -377,7 +370,7 @@ FILE_SCOPE void winjump_resize_search_box(WinjumpState *const state,
 }
 
 #define WINJUMP_STRING_TO_CALC_HEIGHT "H"
-FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
+FILE_SCOPE void Winjump_FontChange(WinjumpState *const state, const HFONT font)
 {
 	if (font)
 	{
@@ -385,7 +378,7 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 		state->font = font;
 
 		bool redrawImmediately = false;
-		for (i32 i = 0; i < winjumpwindow_count; i++)
+		for (i32 i = 0; i < WinjumpWindow_Count; i++)
 		{
 			HWND targetWindow = globalState.window[i].handle;
 			SendMessage(targetWindow, WM_SETFONT, (WPARAM)font,
@@ -393,11 +386,11 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 		}
 
 		HWND editWindow =
-		    globalState.window[winjumpwindow_input_search_entries].handle;
+		    globalState.window[WinjumpWindow_InputSearchEntries].handle;
 		HDC deviceContext = GetDC(editWindow);
 
 		LONG newHeight;
-		win32_font_calculate_dim(deviceContext, globalState.font,
+		Win32FontCalculateDim(deviceContext, globalState.font,
 		                         WINJUMP_STRING_TO_CALC_HEIGHT, NULL,
 		                         &newHeight);
 		ReleaseDC(editWindow, deviceContext);
@@ -405,98 +398,41 @@ FILE_SCOPE void winjump_font_change(WinjumpState *const state, const HFONT font)
 		// TODO(doyle): Repated in WM_SIZE
 		const i32 MIN_SEARCH_HEIGHT = 18;
 		newHeight = DQN_MAX(MIN_SEARCH_HEIGHT, (LONG)(newHeight * 1.85f));
-		winjump_resize_search_box(&globalState, 0, newHeight, true, false);
+		Winjump_ResizeSearchBox(&globalState, 0, newHeight, true, false);
 	}
 	else
 	{
-		DQN_WIN32_ERROR_BOX("winjump_font_change() failed: Font was NULL.",
+		DQN_WIN32_ERROR_BOX("Winjump_FontChange() failed: Font was NULL.",
 		                    NULL);
 	}
 }
 
-u32 winjump_apphotkey_to_win32_hkm_hotkey_modifier(
-    enum AppHotkeyModifier modifier)
-{
-	u32 result = 0;
+bool Winjump_HotkeyIsValid(AppHotkey hotkey) {
 
-	if (modifier == apphotkeymodifier_alt)
+	if (hotkey.win32VirtualKey >= 'A' && hotkey.win32VirtualKey <= 'Z')
 	{
-		result = HOTKEYF_ALT;
-	}
-	else if (modifier == apphotkeymodifier_shift)
-	{
-		result = HOTKEYF_SHIFT;
-	}
-	else
-	{
-		DQN_ASSERT(modifier == apphotkeymodifier_ctrl);
-		result = HOTKEYF_CONTROL;
+		if (hotkey.win32ModifierKey == MOD_ALT || hotkey.win32ModifierKey == MOD_CONTROL ||
+			hotkey.win32ModifierKey == MOD_SHIFT)
+		{
+			return true;
+		}
 	}
 
-	return result;
-}
-
-u32 winjump_apphotkey_to_win32_mod_hotkey_modifier(
-    enum AppHotkeyModifier modifier)
-{
-	u32 result = 0;
-
-	if (modifier == apphotkeymodifier_alt)
-	{
-		result = MOD_ALT;
-	}
-	else if (modifier == apphotkeymodifier_shift)
-	{
-		result = MOD_SHIFT;
-	}
-	else
-	{
-		DQN_ASSERT(modifier == apphotkeymodifier_ctrl);
-		result = MOD_CONTROL;
-	}
-
-	return result;
-}
-
-inline enum AppHotkeyModifier
-winjump_win32_hkm_hotkey_modifier_to_apphotkey(i32 win32HkmHotkeyModifier)
-{
-	enum AppHotkeyModifier result;
-
-	if (win32HkmHotkeyModifier == HOTKEYF_ALT)
-	{
-		result = apphotkeymodifier_alt;
-	}
-	else if (win32HkmHotkeyModifier == HOTKEYF_SHIFT)
-	{
-		result = apphotkeymodifier_shift;
-	}
-	else
-	{
-		DQN_ASSERT(win32HkmHotkeyModifier == HOTKEYF_CONTROL);
-		result = apphotkeymodifier_ctrl;
-	}
-
-	return result;
+	return false;
 }
 
 // Returns the len of the buffer used
-u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf, u32 bufSize)
+u32 Winjump_HotkeyToString(AppHotkey hotkey, char *const buf, u32 bufSize)
 {
 	if (!buf) return 0;
 
 	char *stringPtr = buf;
 
-	if (hotkey.modifier == apphotkeymodifier_alt)
-		stringPtr += dqn_sprintf(stringPtr, "%s", "Alt-");
+	if      (hotkey.win32ModifierKey == MOD_ALT)     stringPtr += Dqn_sprintf(stringPtr, "%s", "Alt-");
+	else if (hotkey.win32ModifierKey == MOD_CONTROL) stringPtr += Dqn_sprintf(stringPtr, "%s", "Ctrl-");
+	else if (hotkey.win32ModifierKey == MOD_SHIFT)   stringPtr += Dqn_sprintf(stringPtr, "%s", "Shift-");
 
-	if (hotkey.modifier == apphotkeymodifier_ctrl)
-		stringPtr += dqn_sprintf(stringPtr, "%s", "Ctrl-");
-
-	if (hotkey.modifier == apphotkeymodifier_shift)
-		stringPtr += dqn_sprintf(stringPtr, "%s", "Shift-");
-
-	dqn_sprintf(stringPtr, "%c", hotkey.virtualKey);
+	Dqn_sprintf(stringPtr, "%c", hotkey.win32VirtualKey);
 
 	u32 len = (u32)((stringPtr - buf) + 1);
 	DQN_ASSERT(len < bufSize);
@@ -504,11 +440,10 @@ u32 winjump_hotkey_to_string(AppHotkey hotkey, char *const buf, u32 bufSize)
 	return len;
 }
 
-FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
-    HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK Win32_HotkeyWinjumpActivateCallback(HWND window, UINT msg,
+                                                                WPARAM wParam, LPARAM lParam)
 {
-	Win32Window *win32Window =
-	    winjump_get_win32window_from_hwnd(&globalState, window);
+	Win32Window *win32Window = GetWin32WindowFromHwnd(&globalState, window);
 	DQN_ASSERT(win32Window);
 
 	LRESULT result = 0;
@@ -530,53 +465,42 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 			////////////////////////////////////////////////////////////////////
 			LRESULT newHotkey  = SendMessageW(window, HKM_GETHOTKEY, 0, 0);
 			char newVirtualKey = LOBYTE(LOWORD(newHotkey));
-			u8 newKeyModifier  = HIBYTE(LOWORD(newHotkey));
 
-			HWND client = globalState.window[winjumpwindow_main_client].handle;
+			// NOTE: The key modifier sent back from the hot-key control is different from the one
+			// windows uses to register a hotkey. So we have to convert it.
+			u8 newKeyModifier    = HIBYTE(LOWORD(newHotkey));
+			u8 realWin32Modifier = (u8)currHotkey->win32ModifierKey;
+			if      (newKeyModifier == HOTKEYF_ALT)     realWin32Modifier = MOD_ALT;
+			else if (newKeyModifier == HOTKEYF_CONTROL) realWin32Modifier = MOD_CONTROL;
+			else if (newKeyModifier == HOTKEYF_SHIFT)   realWin32Modifier = MOD_SHIFT;
+
+			HWND client = globalState.window[WinjumpWindow_MainClient].handle;
 
 			bool newHotkeyRegisteredSuccessfully = false;
 			bool keyCombinationWasComplete       = false;
 
-			i32 currHotkeyWin32Modifier =
-			    winjump_apphotkey_to_win32_hkm_hotkey_modifier(
-			        currHotkey->modifier);
 			// This is a new candidate hotkey, let's use it
-			if (newVirtualKey >= 'A' && newVirtualKey <= 'Z' &&
-			    (newKeyModifier == HOTKEYF_ALT ||
-			     newKeyModifier == HOTKEYF_CONTROL ||
-			     newKeyModifier == HOTKEYF_SHIFT))
+			if ((newVirtualKey >= 'A' && newVirtualKey <= 'Z') &&
+			    (realWin32Modifier == MOD_ALT || realWin32Modifier == MOD_CONTROL || realWin32Modifier == MOD_SHIFT))
 			{
 				keyCombinationWasComplete = true;
 
-				if (currHotkey->virtualKey == newVirtualKey &&
-				    currHotkeyWin32Modifier == newKeyModifier)
+				if (currHotkey->win32VirtualKey  == newVirtualKey &&
+				    currHotkey->win32ModifierKey == realWin32Modifier)
 				{
-					// User has entered the same one, mark it as already
-					// registered and skip. We also don't mark the config stale
-					// if it isn't already.
+					// User has entered the same one, mark it as already registered and skip. We
+					// also don't mark the config stale if it isn't already.
 					newHotkeyRegisteredSuccessfully = true;
 				}
 				else
 				{
-					currHotkey->virtualKey = newVirtualKey;
-					currHotkey->modifier =
-					    winjump_win32_hkm_hotkey_modifier_to_apphotkey(
-					        newKeyModifier);
-
-					// Convert to global hotkey defines
-					u32 rhkModifier = 0;
-					if (newKeyModifier == HOTKEYF_ALT)
-						rhkModifier = MOD_ALT;
-					else if (newKeyModifier == HOTKEYF_CONTROL)
-						rhkModifier = MOD_CONTROL;
-					else if (newKeyModifier == HOTKEYF_SHIFT)
-						rhkModifier = MOD_SHIFT;
-					DQN_ASSERT(rhkModifier != 0);
+					currHotkey->win32VirtualKey  = newVirtualKey;
+					currHotkey->win32ModifierKey = realWin32Modifier;
 
 					// Apply the new hotkey
 					UnregisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP);
-					if (RegisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP,
-					                   rhkModifier, currHotkey->virtualKey))
+					if (RegisterHotKey(client, WIN32_GUID_HOTKEY_ACTIVATE_APP, currHotkey->win32ModifierKey,
+					                   currHotkey->win32VirtualKey))
 					{
 						newHotkeyRegisteredSuccessfully = true;
 						globalState.configIsStale       = true;
@@ -585,16 +509,15 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 			}
 			else
 			{
-				// Otherwise, entered hotkey is not a complete combination yet,
-				// i.e. only modifier pressed, or only key pressed
+				// Otherwise, entered hotkey is not a complete combination yet, i.e. only modifier
+				// pressed, or only key pressed
 			}
 
 			///////////////////////////////////////////////////////////////////
 			// Draw Hotkey + Caret
 			///////////////////////////////////////////////////////////////////
 			char hotkeyString[32] = {};
-			winjump_hotkey_to_string(*currHotkey, hotkeyString,
-			                         DQN_ARRAY_COUNT(hotkeyString));
+			Winjump_HotkeyToString(*currHotkey, hotkeyString, DQN_ARRAY_COUNT(hotkeyString));
 
 			RECT rect;
 			GetClientRect(window, &rect);
@@ -603,8 +526,7 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 			HDC deviceContext = GetDC(window);
 
 			LONG stringWidth, stringHeight;
-			win32_font_calculate_dim(deviceContext, globalState.font,
-			                         hotkeyString, &stringWidth, &stringHeight);
+			Win32FontCalculateDim(deviceContext, globalState.font, hotkeyString, &stringWidth, &stringHeight);
 			rect.right = rect.left + stringWidth;
 
 			SelectObject(deviceContext, globalState.font);
@@ -619,24 +541,19 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 			///////////////////////////////////////////////////////////////////
 			if (keyCombinationWasComplete)
 			{
-				HWND textValidHotkey =
-				    globalState.window[winjumpwindow_text_hotkey_is_valid]
-				        .handle;
+				HWND textValidHotkey = globalState.window[WinjumpWindow_TextHotkeyIsValid].handle;
 				if (newHotkeyRegisteredSuccessfully)
 				{
 					char newWindowTitle[256] = {};
-					dqn_sprintf(newWindowTitle,
-					            "Winjump | Press %s to activate Winjump",
-					            hotkeyString);
+					Dqn_sprintf  (newWindowTitle, "Winjump | Press %s to activate Winjump", hotkeyString);
 					SetWindowText(client, newWindowTitle);
-					SetWindowText(textValidHotkey,
-					              "Hotkey is vacant and valid");
+
+					SetWindowText(textValidHotkey, "Hotkey is vacant and valid");
 				}
 				else
 				{
 					SetWindowText(client, CONFIG_GLOBAL_STRING_INVALID_HOTKEY);
-					SetWindowText(textValidHotkey,
-					              "Hotkey is in used and not valid");
+					SetWindowText(textValidHotkey, "Hotkey is in use and not valid");
 				}
 			}
 
@@ -653,17 +570,15 @@ FILE_SCOPE LRESULT CALLBACK win32_hotkey_winjump_activate_callback(
 	}
 }
 
-FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
-                                                    WPARAM wParam,
-                                                    LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK Win32TabCtrlCallback(HWND window, UINT msg, WPARAM wParam,
+                                                 LPARAM lParam)
 {
 	// TODO: Since edit box, list, btns etc, most main UI is living as childs in
 	// the tab, all the command calls are being sent to tab ctrl callback
 
 	// Not sure why they're not propagating to the main callback since
 	// mainwindow owns tabs which owns the lists/btns etc
-	Win32Window *win32Window =
-	    winjump_get_win32window_from_hwnd(&globalState, window);
+	Win32Window *win32Window = GetWin32WindowFromHwnd(&globalState, window);
 	DQN_ASSERT(win32Window);
 
 	LRESULT result = 0;
@@ -678,7 +593,7 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 			// lParam         = Control Handle
 			HWND handle = (HWND)lParam;
 			if (handle ==
-			    globalState.window[winjumpwindow_list_program_entries].handle)
+			    globalState.window[WinjumpWindow_ListProgramEntries].handle)
 			{
 				WORD notificationCode = HIWORD((DWORD)wParam);
 				if (notificationCode == LBN_SELCHANGE)
@@ -699,7 +614,7 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 						                               selectedIndex, 0);
 						DQN_ASSERT((u32)itemPid == showProgram.pid);
 						SendMessageW(handle, LB_SETCURSEL, (WPARAM)-1, 0);
-						win32_display_window(showProgram.window);
+						Win32DisplayWindow(showProgram.window);
 					}
 				}
 				else
@@ -710,7 +625,7 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 			}
 
 			if (handle ==
-			    globalState.window[winjumpwindow_btn_change_font].handle)
+			    globalState.window[WinjumpWindow_BtnChangeFont].handle)
 			{
 				WORD notificationCode = HIWORD((DWORD)wParam);
 				if (notificationCode == BN_CLICKED)
@@ -730,7 +645,7 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 						HFONT font = CreateFontIndirectW(&chosenFont);
 						if (font)
 						{
-							winjump_font_change(&globalState, font);
+							Winjump_FontChange(&globalState, font);
 							globalState.configIsStale = true;
 						}
 						else
@@ -766,51 +681,50 @@ FILE_SCOPE LRESULT CALLBACK win32_tab_ctrl_callback(HWND window, UINT msg,
 	return result;
 }
 
-FILE_SCOPE void win32_tab_options_resize_windows(WinjumpState *state)
+FILE_SCOPE void Win32TabOptionsResizeWindows(WinjumpState *state)
 {
-	HWND tab            = state->window[winjumpwindow_tab].handle;
+	HWND tab            = state->window[WinjumpWindow_Tab].handle;
 	LONG contentOffsetY = 0;
-	win32_tab_get_offset_to_content(tab, NULL, &contentOffsetY);
+	Win32TabGetOffsetToContent(tab, NULL, &contentOffsetY);
 
 	LONG tabWidth;
-	dqn_win32_get_client_dim(tab, &tabWidth, NULL);
-	DqnV2 btnDim = dqn_v2(100, 30);
+	DqnWin32_GetClientDim(tab, &tabWidth, NULL);
+	DqnV2 btnDim = DqnV2_2f(100, 30);
 
 	// Position the set hotkey label
 	LONG fontHeight   = 0;
 	HDC deviceContext = GetDC(tab);
-	win32_font_calculate_dim(deviceContext, globalState.font,
+	Win32FontCalculateDim(deviceContext, globalState.font,
 	                         WINJUMP_STRING_TO_CALC_HEIGHT, NULL, &fontHeight);
 	ReleaseDC(tab, deviceContext);
 
-	HWND hotkeyActivateLabel = state->window[winjumpwindow_text_hotkey_winjump_activate].handle;
-	DqnV2 textHotkeyP        = dqn_v2i(WIN32_UI_MARGIN, WIN32_UI_MARGIN + contentOffsetY);
-	DqnV2 textHotkeyDim      = dqn_v2i(tabWidth - WIN32_UI_MARGIN, fontHeight + WIN32_UI_MARGIN);
+	HWND hotkeyActivateLabel = state->window[WinjumpWindow_TextHotkeyWinjumpActivate].handle;
+	DqnV2 textHotkeyP        = DqnV2_2i(WIN32_UI_MARGIN, WIN32_UI_MARGIN + contentOffsetY);
+	DqnV2 textHotkeyDim      = DqnV2_2i(tabWidth - WIN32_UI_MARGIN, fontHeight + WIN32_UI_MARGIN);
 	MoveWindow(hotkeyActivateLabel, (i32)textHotkeyP.x, (i32)textHotkeyP.y,
 	          (i32)textHotkeyDim.w, (i32)textHotkeyDim.h, true);
 
 	// Position the hotkey control
-	HWND hotkeyActivate = state->window[winjumpwindow_hotkey_winjump_activate].handle;
-	DqnV2 hotkeyP       = dqn_v2(textHotkeyP.x, textHotkeyP.y + textHotkeyDim.h + WIN32_UI_MARGIN);
+	HWND hotkeyActivate = state->window[WinjumpWindow_HotkeyWinjumpActivate].handle;
+	DqnV2 hotkeyP       = DqnV2_2f(textHotkeyP.x, textHotkeyP.y + textHotkeyDim.h + WIN32_UI_MARGIN);
 	MoveWindow(hotkeyActivate, (i32)hotkeyP.x, (i32)hotkeyP.y, (i32)btnDim.w, (i32)btnDim.h, true);
 
 	// Position the hotkey is valid text next to the hotkey control
 	{
-		HWND text = state->window[winjumpwindow_text_hotkey_is_valid].handle;
-		DqnV2 dim = dqn_v2(textHotkeyDim.w, btnDim.h);
-		DqnV2 p   = dqn_v2(hotkeyP.x + btnDim.x + WIN32_UI_MARGIN, hotkeyP.y + (dim.h * 0.25f));
+		HWND text = state->window[WinjumpWindow_TextHotkeyIsValid].handle;
+		DqnV2 dim = DqnV2_2f(textHotkeyDim.w, btnDim.h);
+		DqnV2 p   = DqnV2_2f(hotkeyP.x + btnDim.x + WIN32_UI_MARGIN, hotkeyP.y + (dim.h * 0.25f));
 		MoveWindow(text, (i32)p.x, (i32)p.y, (i32)dim.w, (i32)dim.h, true);
 	}
 
 	// Position the change font button
-	HWND btnChangeFont = state->window[winjumpwindow_btn_change_font].handle;
-	DqnV2 btnP = dqn_v2(hotkeyP.x, hotkeyP.y + btnDim.h + WIN32_UI_MARGIN);
+	HWND btnChangeFont = state->window[WinjumpWindow_BtnChangeFont].handle;
+	DqnV2 btnP = DqnV2_2f(hotkeyP.x, hotkeyP.y + btnDim.h + WIN32_UI_MARGIN);
 	MoveWindow(btnChangeFont, (i32)btnP.x, (i32)btnP.y, (i32)btnDim.w, (i32)btnDim.h, TRUE);
 
 }
 
-FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
-                                                WPARAM wParam, LPARAM lParam)
+FILE_SCOPE LRESULT CALLBACK Win32MainCallback(HWND window, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	LRESULT result = 0;
 	switch (msg)
@@ -818,7 +732,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 		case WM_CREATE:
 		{
 			InitCommonControls();
-			globalState.window[winjumpwindow_main_client].handle = window;
+			globalState.window[WinjumpWindow_MainClient].handle = window;
 
 			// NOTE(doyle): Don't set position here, since creation sends
 			// a WM_SIZE, we just put all the size and position logic in there.
@@ -842,8 +756,8 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			);
 			tabWindow.defaultProc =
 			    (WNDPROC)SetWindowLongPtrW(tabWindow.handle, GWLP_WNDPROC,
-			                               (LONG_PTR)win32_tab_ctrl_callback);
-			globalState.window[winjumpwindow_tab] = tabWindow;
+			                               (LONG_PTR)Win32TabCtrlCallback);
+			globalState.window[WinjumpWindow_Tab] = tabWindow;
 
 			////////////////////////////////////////////////////////////////////
 			// Create 1st Tab Window
@@ -864,9 +778,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    tabWindow.handle, NULL, NULL, NULL);
 				editWindow.tabIndex = tabIndex;
 				editWindow.defaultProc =
-			 	    (WNDPROC)SetWindowLongPtrW(editWindow.handle, GWLP_WNDPROC, (LONG_PTR)win32_edit_box_callback);
+			 	    (WNDPROC)SetWindowLongPtrW(editWindow.handle, GWLP_WNDPROC, (LONG_PTR)Win32EditBoxCallback);
 
-				globalState.window[winjumpwindow_input_search_entries] =
+				globalState.window[WinjumpWindow_InputSearchEntries] =
 				    editWindow;
 				SetFocus(editWindow.handle);
 
@@ -882,9 +796,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    0, // height
 				    tabWindow.handle, NULL, NULL, NULL);
 				listWindow.tabIndex = tabIndex;
-				listWindow.defaultProc = (WNDPROC)SetWindowLongPtrW(listWindow.handle, GWLP_WNDPROC, (LONG_PTR)win32_list_box_callback);
+				listWindow.defaultProc = (WNDPROC)SetWindowLongPtrW(listWindow.handle, GWLP_WNDPROC, (LONG_PTR)Win32ListBoxCallback);
 
-				globalState.window[winjumpwindow_list_program_entries] =
+				globalState.window[WinjumpWindow_ListProgramEntries] =
 				    listWindow;
 			}
 
@@ -915,7 +829,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    NULL,
 				    NULL); // Pointer not needed.
 				btnChangeFont.tabIndex = tabIndex;
-				globalState.window[winjumpwindow_btn_change_font] =
+				globalState.window[WinjumpWindow_BtnChangeFont] =
 				    btnChangeFont;
 
 				// Create change activation hotkey is valid static text
@@ -932,7 +846,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				                    NULL,                 // instance
 				                    NULL); // no WM_CREATE parameter
 				textHotkeyWinjumpActivate.tabIndex = tabIndex;
-				globalState.window[winjumpwindow_text_hotkey_winjump_activate] =
+				globalState.window[WinjumpWindow_TextHotkeyWinjumpActivate] =
 				    textHotkeyWinjumpActivate;
 
 				// Create change activation hotkey
@@ -954,8 +868,8 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				hotkeyWinjumpActivate.tabIndex = tabIndex;
 				hotkeyWinjumpActivate.defaultProc = (WNDPROC)SetWindowLongPtrW(
 				    hotkeyWinjumpActivate.handle, GWLP_WNDPROC,
-				    (LONG_PTR)win32_hotkey_winjump_activate_callback);
-				globalState.window[winjumpwindow_hotkey_winjump_activate] =
+				    (LONG_PTR)Win32_HotkeyWinjumpActivateCallback);
+				globalState.window[WinjumpWindow_HotkeyWinjumpActivate] =
 				    hotkeyWinjumpActivate;
 
 				// Create change activation hotkey is valid static text
@@ -972,7 +886,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				    NULL,                          // instance
 				    NULL);                         // no WM_CREATE parameter
 				textHotkeyIsValid.tabIndex = tabIndex;
-				globalState.window[winjumpwindow_text_hotkey_is_valid] =
+				globalState.window[WinjumpWindow_TextHotkeyIsValid] =
 				    textHotkeyIsValid;
 			}
 
@@ -992,13 +906,13 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			    NULL,    // child window identifier
 			    NULL,    // handle to application instance
 			    NULL);
-			globalState.window[winjumpwindow_status_bar] = statusWindow;
+			globalState.window[WinjumpWindow_StatusBar] = statusWindow;
 
 			////////////////////////////////////////////////////////////////////
 			// Use Default Font
 			////////////////////////////////////////////////////////////////////
 			HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-			winjump_font_change(&globalState, font);
+			Winjump_FontChange(&globalState, font);
 
 #ifdef WINJUMP_DEBUG_MODE
 			for (i32 i = 0; i < DQN_ARRAY_COUNT(globalState.window); i++)
@@ -1020,7 +934,7 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 		{
 			NMHDR *notificationMsg = (NMHDR *)lParam;
 			if (notificationMsg->hwndFrom ==
-			    globalState.window[winjumpwindow_tab].handle)
+			    globalState.window[WinjumpWindow_Tab].handle)
 			{
 				switch (notificationMsg->code)
 				{
@@ -1066,9 +980,9 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 
 		case WM_HOTKEY:
 		{
-			win32_display_window(window);
+			Win32DisplayWindow(window);
 			HWND editBox =
-			    globalState.window[winjumpwindow_input_search_entries].handle;
+			    globalState.window[WinjumpWindow_InputSearchEntries].handle;
 			SetFocus(editBox);
 		}
 		break;
@@ -1076,13 +990,13 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 		case WM_SIZE:
 		{
 			LONG clientWidth, clientHeight;
-			dqn_win32_get_client_dim(window, &clientWidth, &clientHeight);
+			DqnWin32_GetClientDim(window, &clientWidth, &clientHeight);
 
 			// NOTE: This can be called before inner window elements are created
 			////////////////////////////////////////////////////////////////////
 			// Re-configure Status Bar on Resize
 			////////////////////////////////////////////////////////////////////
-			HWND status = globalState.window[winjumpwindow_status_bar].handle;
+			HWND status = globalState.window[WinjumpWindow_StatusBar].handle;
 			{
 				// Setup the parts of the status bar
 				const WPARAM numParts  = 3;
@@ -1100,10 +1014,10 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			////////////////////////////////////////////////////////////////////
 			// Setup tab interface
 			////////////////////////////////////////////////////////////////////
-			HWND tab = globalState.window[winjumpwindow_tab].handle;
+			HWND tab = globalState.window[WinjumpWindow_Tab].handle;
 			{
 				LONG statusHeight;
-				dqn_win32_get_client_dim(status, NULL, &statusHeight);
+				DqnWin32_GetClientDim(status, NULL, &statusHeight);
 
 				MoveWindow(tab, 0, 0, clientWidth, clientHeight - statusHeight,
 				           TRUE);
@@ -1114,14 +1028,14 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 			////////////////////////////////////////////////////////////////////
 			{
 				HWND editWindow =
-				    globalState.window[winjumpwindow_input_search_entries]
+				    globalState.window[WinjumpWindow_InputSearchEntries]
 				        .handle;
 				const i32 MIN_SEARCH_HEIGHT = 18;
 
 				HDC deviceContext = GetDC(editWindow);
 
 				LONG searchHeight;
-				win32_font_calculate_dim(deviceContext, globalState.font,
+				Win32FontCalculateDim(deviceContext, globalState.font,
 				                         WINJUMP_STRING_TO_CALC_HEIGHT, NULL,
 				                         &searchHeight);
 				searchHeight =
@@ -1129,19 +1043,19 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 				ReleaseDC(editWindow, deviceContext);
 
 				LONG searchWidth;
-				dqn_win32_get_client_dim(tab, &searchWidth, NULL);
+				DqnWin32_GetClientDim(tab, &searchWidth, NULL);
 				searchWidth -= (2 * WIN32_UI_MARGIN);
 
 				// NOTE: This also re-positions the list because it depends on
 				// the search box position
-				winjump_resize_search_box(&globalState, searchWidth,
+				Winjump_ResizeSearchBox(&globalState, searchWidth,
 				                          searchHeight, false, false);
 			}
 
 			////////////////////////////////////////////////////////////////////
 			// Adjust the options tab elements
 			////////////////////////////////////////////////////////////////////
-			win32_tab_options_resize_windows(&globalState);
+			Win32TabOptionsResizeWindows(&globalState);
 
 			result = DefWindowProcW(window, msg, wParam, lParam);
 		}
@@ -1159,14 +1073,14 @@ FILE_SCOPE LRESULT CALLBACK win32_main_callback(HWND window, UINT msg,
 }
 
 FILE_SCOPE bool
-winjump_program_array_shallow_copy_array_internal(DqnArray<Win32Program> *src,
-                                                  DqnArray<Win32Program> *dest)
+Winjump_ProgramArrayShallowCopyArrayInternal(DqnArray<Win32Program> *src,
+                                             DqnArray<Win32Program> *dest)
 {
 	if (src && dest)
 	{
 		// NOTE: Once we take a snapshot, we stop enumerating windows, so we
 		// only need to allocate exactly array->count
-		if (dqn_array_init(dest, (size_t)src->count))
+		if (DqnArray_Init(dest, (size_t)src->count))
 		{
 			DQN_ASSERT(src->data && dest->data);
 			memcpy(dest->data, src->data, (size_t)src->count * sizeof(*src->data));
@@ -1180,36 +1094,40 @@ winjump_program_array_shallow_copy_array_internal(DqnArray<Win32Program> *src,
 }
 
 FILE_SCOPE bool
-winjump_program_array_restore_snapshot(WinjumpState *state,
+Winjump_ProgramArrayRestoreSnapshot(WinjumpState *state,
                                        DqnArray<Win32Program> *snapshot)
 {
-	bool result = winjump_program_array_shallow_copy_array_internal(
+	bool result = Winjump_ProgramArrayShallowCopyArrayInternal(
 	    snapshot, &state->programArray);
 	return result;
 }
 
 FILE_SCOPE bool
-winjump_program_array_create_snapshot(WinjumpState *state,
+Winjump_ProgramArrayCreateSnapshot(WinjumpState *state,
                                       DqnArray<Win32Program> *snapshot)
 {
-	bool result = winjump_program_array_shallow_copy_array_internal(
+	bool result = Winjump_ProgramArrayShallowCopyArrayInternal(
 	    &state->programArray, snapshot);
 	return result;
 }
 
-void winjump_update(WinjumpState *state)
+DQN_FILE_SCOPE inline void WStrToLower(wchar_t *const str, const i32 len) {
+	for (i32 i = 0; i < len; i++) str[i] = DqnWChar_ToLower(str[i]);
+}
+
+void Winjump_Update(WinjumpState *state)
 {
-	HWND listBox = state->window[winjumpwindow_list_program_entries].handle;
+	HWND listBox = state->window[WinjumpWindow_ListProgramEntries].handle;
 	i32 firstVisibleIndex = (i32)SendMessageW(listBox, LB_GETTOPINDEX, 0, 0);
 
 	// NOTE: Set first char is size of buffer as required by win32
 	wchar_t newSearchStr[WIN32_MAX_PROGRAM_TITLE] = {};
 	newSearchStr[0]  = DQN_ARRAY_COUNT(newSearchStr);
-	HWND editBox     = state->window[winjumpwindow_input_search_entries].handle;
+	HWND editBox     = state->window[WinjumpWindow_InputSearchEntries].handle;
 	i32 newSearchLen = (i32)SendMessageW(editBox, EM_GETLINE, 0, (LPARAM)newSearchStr);
 
 	LONG width, height;
-	dqn_win32_get_client_dim(editBox, &width, &height);
+	DqnWin32_GetClientDim(editBox, &width, &height);
 
 	///////////////////////////////////////////////////////////////////////////
 	// Enumerate windows or initiate state for filtering
@@ -1223,7 +1141,7 @@ void winjump_update(WinjumpState *state)
 	if (state->isFilteringResults)
 	{
 		DQN_ASSERT(newSearchLen > 0);
-		wchar_str_to_lower(newSearchStr, newSearchLen);
+		WStrToLower(newSearchStr, newSearchLen);
 		if (state->searchStringLen == newSearchLen)
 		{
 			// NOTE: It's possible to remove more than 1 character from the
@@ -1235,15 +1153,14 @@ void winjump_update(WinjumpState *state)
 			if (searchSpaceDecreased)
 			{
 				DqnArray<Win32Program> snapshot = {};
-				if (winjump_program_array_create_snapshot(state, &snapshot))
+				if (Winjump_ProgramArrayCreateSnapshot(state, &snapshot))
 				{
-					dqn_array_push(&state->programArraySnapshotStack,
-					                snapshot);
+					DqnArray_Push(&state->programArraySnapshotStack, snapshot);
 				}
 				else
 				{
 					DQN_WIN32_ERROR_BOX(
-					    "winjump_program_array_create_snapshot() failed: Out"
+					    "Winjump_ProgramArrayCreateSnapshot() failed: Out"
 					    " of memory ",
 					    NULL);
 					globalRunning = false;
@@ -1254,10 +1171,11 @@ void winjump_update(WinjumpState *state)
 			{
 				if (state->programArraySnapshotStack.count > 0)
 				{
-					DqnArray<Win32Program> *snapshot =
-					    dqn_array_pop(&state->programArraySnapshotStack);
-					winjump_program_array_restore_snapshot(state, snapshot);
-					dqn_array_free(snapshot);
+					DqnArray<Win32Program> *snapshot = &state->programArraySnapshotStack.data[state->programArraySnapshotStack.count- 1];
+					DqnArray_Pop(&state->programArraySnapshotStack);
+
+					Winjump_ProgramArrayRestoreSnapshot(state, snapshot);
+					DqnArray_Free(snapshot);
 				}
 			}
 		}
@@ -1268,12 +1186,12 @@ void winjump_update(WinjumpState *state)
 		{
 			DqnArray<Win32Program> *result =
 			    &state->programArraySnapshotStack.data[i];
-			dqn_array_free(result);
+			DqnArray_Free(result);
 		}
-		dqn_array_clear(programArray);
-		dqn_array_clear(&state->programArraySnapshotStack);
+		DqnArray_Clear(programArray);
+		DqnArray_Clear(&state->programArraySnapshotStack);
 
-		EnumWindows(win32_enum_windows_callback, (LPARAM)programArray);
+		EnumWindows(Win32EnumWindowsCallback, (LPARAM)programArray);
 	}
 	state->searchStringLen = newSearchLen;
 
@@ -1290,10 +1208,10 @@ void winjump_update(WinjumpState *state)
 
 		for (i32 j = 0; j < newSearchLen && newSearchStr[j]; j++)
 		{
-			if (wchar_is_digit(newSearchStr[j]))
+			if (DqnWChar_IsDigit(newSearchStr[j]))
 			{
 				i32 numberFoundInString =
-				    wchar_str_to_i32(&newSearchStr[j], newSearchLen - j);
+				    Dqn_WStrToI32(&newSearchStr[j], newSearchLen - j);
 
 				// However many number of digits, increment the search ptr,
 				// because there may be multiple numbers in the search string
@@ -1307,7 +1225,7 @@ void winjump_update(WinjumpState *state)
 				if (userSpecifiedIndex == DQN_ARRAY_COUNT(userSpecifiedNumbers))
 				{
 					DQN_WIN32_ERROR_BOX(
-					    "winjump_update() warning: No more space for user "
+					    "Winjump_Update() warning: No more space for user "
 					    "specified indexes", NULL);
 					break;
 				}
@@ -1322,7 +1240,7 @@ void winjump_update(WinjumpState *state)
 		{
 			Win32Program *program = &programArray->data[index];
 			wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
-			winjump_get_program_friendly_name(program, friendlyName,
+			Winjump_GetProgramFriendlyName(program, friendlyName,
 			                                  DQN_ARRAY_COUNT(friendlyName));
 
 			// NOTE: +1 to lastStableIndex since list displays elements starting
@@ -1350,11 +1268,11 @@ void winjump_update(WinjumpState *state)
 			}
 			if (specifiedNumberWasValid) continue;
 
-			if (!wchar_has_substring(newSearchStr, newSearchLen, friendlyName,
-			                         FRIENDLY_NAME_LEN))
+			if (!DqnWStr_HasSubstring(newSearchStr, newSearchLen, friendlyName,
+			                          FRIENDLY_NAME_LEN))
 			{
 				// If search string doesn't match, delete it from display
-				DQN_ASSERT(dqn_array_remove_stable(programArray, index--));
+				DQN_ASSERT(DqnArray_RemoveStable(programArray, index--));
 				// Update index so we continue iterating over the correct
 				// elements after removing it from the list since the for
 				// loop is post increment and we're removing elements from
@@ -1378,13 +1296,13 @@ void winjump_update(WinjumpState *state)
 
 			// TODO(doyle): Tighten memory alloc using len vars in program
 			wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
-			winjump_get_program_friendly_name(program, friendlyName,
-			                                  DQN_ARRAY_COUNT(friendlyName));
+			Winjump_GetProgramFriendlyName(program, friendlyName,
+			                               DQN_ARRAY_COUNT(friendlyName));
 
 			wchar_t entry[FRIENDLY_NAME_LEN] = {};
 			LRESULT entryLen =
 			    SendMessageW(listBox, LB_GETTEXT, index, (LPARAM)entry);
-			if (wchar_strcmp(friendlyName, entry) != 0)
+			if (DqnWStr_Cmp(friendlyName, entry) != 0)
 			{
 				LRESULT insertIndex = SendMessageW(listBox, LB_INSERTSTRING,
 				                                   index, (LPARAM)friendlyName);
@@ -1410,8 +1328,8 @@ void winjump_update(WinjumpState *state)
 			{
 				Win32Program *program = &programArray->data[i];
 				wchar_t friendlyName[FRIENDLY_NAME_LEN] = {};
-				winjump_get_program_friendly_name(
-				    program, friendlyName, DQN_ARRAY_COUNT(friendlyName));
+				Winjump_GetProgramFriendlyName(program, friendlyName,
+				                               DQN_ARRAY_COUNT(friendlyName));
 
 				LRESULT insertIndex = SendMessageW(listBox, LB_ADDSTRING, 0,
 				                                   (LPARAM)friendlyName);
@@ -1431,50 +1349,16 @@ void winjump_update(WinjumpState *state)
 	}
 }
 
-FILE_SCOPE void debug_unit_test_local_functions()
-{
-	DQN_ASSERT(wchar_to_lower(L'A') == L'a');
-	DQN_ASSERT(wchar_to_lower(L'a') == L'a');
-	DQN_ASSERT(wchar_to_lower(L' ') == L' ');
-
-	{
-		wchar_t *a = L"Microsoft";
-		wchar_t *b = L"icro";
-		i32 lenA   = wchar_strlen(a);
-		i32 lenB   = wchar_strlen(b);
-		DQN_ASSERT(wchar_has_substring(a, lenA, b, lenB) == true);
-		DQN_ASSERT(wchar_has_substring(a, lenA, L"iro", wchar_strlen(L"iro")) ==
-		           false);
-		DQN_ASSERT(wchar_has_substring(b, lenB, a, lenA) == true);
-		DQN_ASSERT(wchar_has_substring(L"iro", wchar_strlen(L"iro"), a, lenA) ==
-		           false);
-		DQN_ASSERT(wchar_has_substring(L"", 0, L"iro", 4) == false);
-		DQN_ASSERT(wchar_has_substring(L"", 0, L"", 0) == false);
-		DQN_ASSERT(wchar_has_substring(NULL, 0, NULL, 0) == false);
-	}
-
-	{
-		wchar_t *a = L"Micro";
-		wchar_t *b = L"irob";
-		i32 lenA   = wchar_strlen(a);
-		i32 lenB   = wchar_strlen(b);
-		DQN_ASSERT(wchar_has_substring(a, lenA, b, lenB) == false);
-		DQN_ASSERT(wchar_has_substring(b, lenB, a, lenA) == false);
-	}
-}
-
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nShowCmd)
 {
 	////////////////////////////////////////////////////////////////////////////
 	// Create Win32 Window
 	////////////////////////////////////////////////////////////////////////////
-	debug_unit_test_local_functions();
-
 	WNDCLASSEXW wc = {
 	    sizeof(WNDCLASSEX),
 	    CS_HREDRAW | CS_VREDRAW,
-	    win32_main_callback,
+	    Win32MainCallback,
 	    0, // int cbClsExtra
 	    0, // int cbWndExtra
 	    hInstance,
@@ -1502,8 +1386,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	r.right  = 450;
 	r.bottom = 200;
 
-	DWORD windowStyle =
-	    WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+	DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
 	AdjustWindowRect(&r, windowStyle, true);
 
 	globalRunning           = true;
@@ -1519,17 +1402,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		return -1;
 	}
 
-	if (!dqn_array_init(&globalState.programArray, 4))
+	if (!DqnArray_Init(&globalState.programArray, 4))
 	{
-		DQN_WIN32_ERROR_BOX("dqn_array_init() failed: Not enough memory.",
+		DQN_WIN32_ERROR_BOX("DqnArray_Init() failed: Not enough memory.",
 		                    NULL);
 		return -1;
 	}
 
-	if (!dqn_array_init(&globalState.programArraySnapshotStack, 4))
+	if (!DqnArray_Init(&globalState.programArraySnapshotStack, 4))
 	{
-		DQN_WIN32_ERROR_BOX("dqn_array_init() failed: Not enough memory.",
-		                    NULL);
+		DQN_WIN32_ERROR_BOX("DqnArray_Init() failed: Not enough memory.", NULL);
 		return -1;
 	}
 
@@ -1537,9 +1419,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	////////////////////////////////////////////////////////////////////////////
 	// Read Configuration if Exist
 	////////////////////////////////////////////////////////////////////////////
-	HFONT fontDerivedFromConfig = config_read_from_disk(&globalState);
+	HFONT fontDerivedFromConfig = Config_ReadFromDisk(&globalState);
 	if (fontDerivedFromConfig)
-		winjump_font_change(&globalState, fontDerivedFromConfig);
+		Winjump_FontChange(&globalState, fontDerivedFromConfig);
 
 	////////////////////////////////////////////////////////////////////////////
 	// Update loop
@@ -1551,7 +1433,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	while (globalRunning)
 	{
-		f64 startFrameTime = dqn_time_now_in_ms();
+		f64 startFrameTime = DqnTimer_NowInMs();
 
 		// NOTE: When window is inactive, GetMessage will suspend the process if
 		// there are no messages. But then once it gets activate it'll break out
@@ -1572,18 +1454,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 		}
-		winjump_update(&globalState);
+		Winjump_Update(&globalState);
 
 		////////////////////////////////////////////////////////////////////////
 		// Update Status Bar
 		////////////////////////////////////////////////////////////////////////
-		HWND status = globalState.window[winjumpwindow_status_bar].handle;
+		HWND status = globalState.window[WinjumpWindow_StatusBar].handle;
 		{
 			// Active Windows text in Status Bar
 			{
 				WPARAM partToDisplayAt = 2;
 				char text[32]          = {};
-				dqn_sprintf(text, "Active Windows: %d",
+				Dqn_sprintf(text, "Active Windows: %d",
 				            globalState.programArray.count);
 				SendMessage(status, SB_SETTEXT, partToDisplayAt, (LPARAM)text);
 			}
@@ -1596,8 +1478,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				{
 					WPARAM partToDisplayAt = 1;
 					char text[32]          = {};
-					dqn_sprintf(text, "Memory: %'dkb",
-					              (u32)(memCounter.PagefileUsage / 1024.0f));
+					Dqn_sprintf(text, "Memory: %'dkb",
+					              (u32)(memCounter.WorkingSetSize / 1024.0f));
 					SendMessage(status, SB_SETTEXT, partToDisplayAt,
 					            (LPARAM)text);
 				}
@@ -1607,7 +1489,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		////////////////////////////////////////////////////////////////////////
 		// Frame Limiting
 		////////////////////////////////////////////////////////////////////////
-		f64 endWorkTime  = dqn_time_now_in_ms();
+		f64 endWorkTime  = DqnTimer_NowInMs();
 		f64 workTimeInMs = endWorkTime - startFrameTime;
 
 		if (workTimeInMs < targetMsPerFrame)
@@ -1616,14 +1498,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			Sleep(remainingTimeInMs);
 		}
 
-		f64 endFrameTime  = dqn_time_now_in_ms();
+		f64 endFrameTime  = DqnTimer_NowInMs();
 		f64 frameTimeInMs = endFrameTime - startFrameTime;
 
 		// Ms Per Frame text in Status Bar
 		{
 			WPARAM partToDisplayAt = 0;
 			char text[32]          = {};
-			dqn_sprintf(text, "MsPerFrame: %.2f", (f32)frameTimeInMs);
+			Dqn_sprintf(text, "MsPerFrame: %.2f", (f32)frameTimeInMs);
 			SendMessage(status, SB_SETTEXT, partToDisplayAt, (LPARAM)text);
 		}
 	}
@@ -1631,7 +1513,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	////////////////////////////////////////////////////////////////////////////
 	// Write Config to Disk
 	////////////////////////////////////////////////////////////////////////////
-	if (globalState.configIsStale) config_write_to_disk(&globalState);
+	if (globalState.configIsStale) Config_WriteToDisk(&globalState);
 
 	return 0;
 }
