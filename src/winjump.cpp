@@ -1152,19 +1152,19 @@ void Winjump_Update(WinjumpState *state)
 			bool searchSpaceDecreased = (newSearchLen > state->searchStringLen);
 			if (searchSpaceDecreased)
 			{
-				DqnArray<Win32Program> snapshot = {};
-				if (Winjump_ProgramArrayCreateSnapshot(state, &snapshot))
+				if (state->programArray.count > 0)
 				{
-					DqnArray_Push(&state->programArraySnapshotStack, snapshot);
-				}
-				else
-				{
-					DQN_WIN32_ERROR_BOX(
-					    "Winjump_ProgramArrayCreateSnapshot() failed: Out"
-					    " of memory ",
-					    NULL);
-					globalRunning = false;
-					return;
+					DqnArray<Win32Program> snapshot = {};
+					if (Winjump_ProgramArrayCreateSnapshot(state, &snapshot))
+					{
+						DqnArray_Push(&state->programArraySnapshotStack, snapshot);
+					}
+					else
+					{
+						DQN_WIN32_ERROR_BOX("Winjump_ProgramArrayCreateSnapshot() failed: Out of memory ", NULL);
+						globalRunning = false;
+						return;
+					}
 				}
 			}
 			else
@@ -1268,8 +1268,7 @@ void Winjump_Update(WinjumpState *state)
 			}
 			if (specifiedNumberWasValid) continue;
 
-			if (!DqnWStr_HasSubstring(newSearchStr, newSearchLen, friendlyName,
-			                          FRIENDLY_NAME_LEN))
+			if (!DqnWStr_HasSubstring(friendlyName, FRIENDLY_NAME_LEN, newSearchStr, newSearchLen))
 			{
 				// If search string doesn't match, delete it from display
 				DQN_ASSERT(DqnArray_RemoveStable(programArray, index--));
